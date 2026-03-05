@@ -58,7 +58,8 @@ const CLASS_CODES = {
   'AD55225': ['D4'], 'AD57025': ['N1','N2'],
 };
 const ALL_TEAMS = Object.values(CLASS_CODES).flat().sort();
-const TEAM_CODE = '15026';
+const TEAM_TO_CODE = {};
+Object.entries(CLASS_CODES).forEach(([code, teams]) => teams.forEach(t => { TEAM_TO_CODE[t] = code.replace(/^AD/, ''); }));
 
 const NON_PLATFORM_CATS = [
   { id: 'classPrep', label: 'Class Prep' }, { id: 'matlsDev', label: 'Matls Dev' },
@@ -285,7 +286,7 @@ function fillPDF(form, formData) {
     const n = i + 1;
     if (!row.teamDsg) return;
     set(n === 1 ? 'Team Dsg 1' : `Team Dsg${n}`, row.teamDsg);
-    set(`Team Code${n}`, TEAM_CODE);
+    set(`Team Code${n}`, TEAM_TO_CODE[row.teamDsg] || '');
     set(`Full SectRow${n}`, row.fullSect || '');
     set(`Split SectRow${n}`, row.splitSect || '');
     set(`Spec AsstRow${n}`, row.specAsst || '');
@@ -451,7 +452,8 @@ function PlatformTCH({ rows, setRows, classCode, setClassCode }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-gray-500">
-              <th className="text-left pl-3 py-1 w-24">Team Dsg</th>
+              <th className="text-left pl-3 py-1 w-20">Team Dsg</th>
+              <th className="py-1 w-16 text-center">Code</th>
               <th className="py-1 w-16 text-center">Full Sect</th>
               <th className="py-1 w-16 text-center">Split Sect</th>
               <th className="py-1 w-16 text-center">Spec Asst</th>
@@ -470,6 +472,7 @@ function PlatformTCH({ rows, setRows, classCode, setClassCode }) {
                     ${ALL_TEAMS.map(t => html`<option key=${t} value=${t}>${t}</option>`)}
                   </select>
                 </td>
+                <td className="py-1 px-1 text-center text-xs text-gray-500">${TEAM_TO_CODE[row.teamDsg] || ''}</td>
                 <td className="py-1 px-1"><${HourInput} value=${row.fullSect} onChange=${v => updateRow(i, 'fullSect', v)} /></td>
                 <td className="py-1 px-1"><${HourInput} value=${row.splitSect} onChange=${v => updateRow(i, 'splitSect', v)} /></td>
                 <td className="py-1 px-1"><${HourInput} value=${row.specAsst} onChange=${v => updateRow(i, 'specAsst', v)} /></td>
@@ -481,7 +484,7 @@ function PlatformTCH({ rows, setRows, classCode, setClassCode }) {
               </tr>
             `)}
             <tr className="border-t-2 border-gray-300 bg-gray-50 font-semibold">
-              <td className="pl-3 py-2 text-xs" colSpan="5">Platform TCH Total</td>
+              <td className="pl-3 py-2 text-xs" colSpan="6">Platform TCH Total</td>
               <td className="py-2 text-center font-bold">${grandTotal || ''}</td>
               <td></td>
             </tr>
