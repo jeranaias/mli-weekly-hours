@@ -222,7 +222,7 @@ if (IS_CONFIGURED) {
   aiModel = getGenerativeModel(ai, {
     model: 'gemini-2.5-flash',
     systemInstruction: SYSTEM_PROMPT,
-    generationConfig: { temperature: 0.3, maxOutputTokens: 16384 },
+    generationConfig: { temperature: 0.3, maxOutputTokens: 65536 },
   });
 }
 
@@ -844,7 +844,8 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
     // Batch mode — detokenize member names for display
     if (parsed?.batch && parsed.members?.length) {
       const displayBatch = { ...parsed, members: parsed.members.map(m => ({ ...m, displayName: detokenize(m.name || '', nt) })) };
-      setMessages([...newMessages, { role: 'assistant', display, batchData: displayBatch }]);
+      const batchDisplay = display || `Processed ${parsed.members.length} team members for the week of ${parsed.sundayDate || 'unknown'}.`;
+      setMessages([...newMessages, { role: 'assistant', display: batchDisplay, batchData: displayBatch }]);
       return;
     }
 
@@ -864,7 +865,13 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
         setMessages([...newMessages, { role: 'assistant', display: display + '\n\nApplied to form.' }]);
       }
     } else {
-      setMessages([...newMessages, { role: 'assistant', display }]);
+      // Detect truncated batch response — AI tried batch but JSON was incomplete
+      const looksLikeBatch = aiText.includes('"batch"') && aiText.includes('"members"') && !parsed;
+      if (looksLikeBatch) {
+        setMessages([...newMessages, { role: 'assistant', display: 'The response was too large and got cut off. Try uploading a smaller file or fewer entries.' }]);
+      } else {
+        setMessages([...newMessages, { role: 'assistant', display }]);
+      }
     }
   };
 
