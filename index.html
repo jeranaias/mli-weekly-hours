@@ -7,14 +7,9 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
-  @media print {
-    .no-print { display: none !important; }
-    .print-only { display: block !important; }
-    body { font-size: 9pt; }
-    .print-break-avoid { break-inside: avoid; }
-  }
-  .print-only { display: none; }
+  @media print { .no-print { display: none !important; } }
   input[type="number"]::-webkit-inner-spin-button,
   input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   input[type="number"] { -moz-appearance: textfield; }
@@ -24,7 +19,7 @@ tailwind.config = {
   theme: {
     extend: {
       colors: {
-        mil: { 50: '#f0f4f0', 100: '#d9e2d9', 200: '#b3c5b3', 500: '#4a6741', 600: '#3d5636', 700: '#2f432a', 800: '#22301e', 900: '#141e12' }
+        mil: { 50:'#f0f4f0', 100:'#d9e2d9', 200:'#b3c5b3', 500:'#4a6741', 600:'#3d5636', 700:'#2f432a', 800:'#22301e', 900:'#141e12' }
       }
     }
   }
@@ -43,11 +38,7 @@ import htm from 'https://esm.sh/htm@3.1.1';
 const { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } = React;
 const html = htm.bind(React.createElement);
 
-// ─── Firebase Config ────────────────────────────────────────────────────────
-// Replace with your Firebase project config.
-// Get this from: Firebase Console → Project Settings → Your apps → Web app
-// Setup guide: see SETUP section at bottom of this file.
-
+// ─── Firebase Config ─────────────────────────────────────────────────────────
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyAaMZ5HNwKBCNIaf8LYJXQ7K6RMe-FA_B4",
   authDomain: "mli-automate-hours.firebaseapp.com",
@@ -56,11 +47,9 @@ const FIREBASE_CONFIG = {
   messagingSenderId: "770958006562",
   appId: "1:770958006562:web:b22a5b4cd36ec6138fad7b",
 };
-
 const IS_CONFIGURED = !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId);
 
-// ─── Data ───────────────────────────────────────────────────────────────────
-
+// ─── Data ────────────────────────────────────────────────────────────────────
 const CLASS_CODES = {
   'AD00125': ['E1','E2'], 'AD00326': ['I2','J1'], 'AD00426': ['A2','M3','M5'],
   'AD01225': ['D2'], 'AD50125': ['B2','C3','C4'], 'AD50126': ['A4','C2','D1','E3'],
@@ -69,146 +58,132 @@ const CLASS_CODES = {
   'AD55225': ['D4'], 'AD57025': ['N1','N2'],
 };
 const ALL_TEAMS = Object.values(CLASS_CODES).flat().sort();
-const TEAM_TO_CODE = {};
-Object.entries(CLASS_CODES).forEach(([code, teams]) => teams.forEach(t => { TEAM_TO_CODE[t] = code; }));
+const TEAM_CODE = '15026';
 
-const DAYS = ['Mon','Tue','Wed','Thu','Fri'];
-
-const SECTIONS = [
-  { id: 'platform', title: 'Platform Teaching Contact Hours (TCH)', shortTitle: 'Platform TCH', categories: [
-    { id: 'fullSect', label: 'Full Sect' }, { id: 'splitSect', label: 'Split Sect' },
-    { id: 'specAsst', label: 'Spec Asst' }, { id: 'supple', label: 'Supple Hrs' },
-  ]},
-  { id: 'nonPlatform', title: 'Non-Platform Schoolhouse Hours', shortTitle: 'Non-Platform', categories: [
-    { id: 'classPrep', label: 'Class Prep' }, { id: 'matlsDev', label: 'Matls Dev' },
-    { id: 'matlsReview', label: 'Matls Review' }, { id: 'acadAdvise', label: 'Acad Advise' },
-    { id: 'discCounsel', label: 'Disc Counsel' }, { id: 'mliInstMentor', label: 'MLI Inst Mentor' },
-    { id: 'classObserve', label: 'Class Observe' }, { id: 'testProctor', label: 'Test Proctor' },
-    { id: 'ocEventAdmin', label: 'OC Event Admin Spt' },
-  ]},
-  { id: 'unit', title: 'Unit Hours', shortTitle: 'Unit Hrs', categories: [
-    { id: 'unitDuties', label: 'Unit Duties' }, { id: 'langMentor', label: 'Lang Mentor' },
-    { id: 'proDevPme', label: 'Pro Dev PME SLTE' }, { id: 'postComm', label: 'Post/Comm Events' },
-  ]},
+const NON_PLATFORM_CATS = [
+  { id: 'classPrep', label: 'Class Prep' }, { id: 'matlsDev', label: 'Matls Dev' },
+  { id: 'matlsReview', label: 'Matls Review' }, { id: 'acadAdvise', label: 'Acad Advise' },
+  { id: 'discCounsel', label: 'Disc Counsel' }, { id: 'mliInstMentor', label: 'MLI Inst Mentor' },
+  { id: 'classObserve', label: 'Class Observe' }, { id: 'testProctor', label: 'Test Proctor' },
+  { id: 'ocEventAdmin', label: 'OC Event Admin Spt' },
 ];
-const ALL_CATEGORIES = SECTIONS.flatMap(s => s.categories.map(c => ({ ...c, section: s.id })));
+
+const UNIT_CATS = [
+  { id: 'unitDuties', label: 'Unit Duties' }, { id: 'langMentor', label: 'Lang Mentor' },
+  { id: 'proDevPme', label: 'Pro Dev PME SLTE' }, { id: 'postComm', label: 'Post/Comm Events' },
+  { id: 'absence', label: 'Approved Absence' },
+];
 
 const CATEGORY_DEFS = {
-  fullSect: 'Teaching the full section — all assigned students present, not subdivided.',
-  splitSect: 'Teaching a subgroup of a multi-team section split across rooms.',
-  specAsst: 'One-on-one or small group instruction delivering curriculum content.',
-  supple: 'Group instruction beyond core hours 1-3 (fourth hour, supplemental materials).',
-  classPrep: 'Preparing for a specific upcoming lesson you will personally deliver.',
+  fullSect: 'Teaching the full section — all assigned students present.',
+  splitSect: 'Teaching a subgroup split from a multi-team section.',
+  specAsst: 'One-on-one or small group instruction delivering curriculum.',
+  suppleHours: 'Group instruction beyond core hours (4th hour, supplemental).',
+  classPrep: 'Preparing for a specific upcoming lesson you will deliver.',
   matlsDev: 'Creating new instructional materials from scratch.',
-  matlsReview: 'Reviewing, updating, or evaluating existing instructional materials.',
-  acadAdvise: 'Discussing academic performance, EI/SLS sessions — no content delivery.',
-  discCounsel: 'Counseling a student on a behavioral/disciplinary infraction.',
-  mliInstMentor: 'Coaching or mentoring a fellow instructor on pedagogy.',
-  classObserve: "Formally observing another instructor's class with a rubric/evaluation.",
-  testProctor: 'Proctoring a test or leading a post-test critique (default 2 hrs for critiques).',
-  ocEventAdmin: 'Schoolhouse-directed admin: PERSTAT, SIR, 806, EI scheduling, Form 106.',
-  unitDuties: 'Unit/command-directed tasks: formations, MLI sync, collateral duties.',
-  langMentor: 'Language mentoring for non-students or outside the DLI curriculum.',
+  matlsReview: 'Reviewing, updating, or evaluating existing materials.',
+  acadAdvise: 'Discussing academic performance, EI/SLS sessions.',
+  discCounsel: 'Counseling on a behavioral/disciplinary infraction.',
+  mliInstMentor: 'Coaching or mentoring a fellow instructor.',
+  classObserve: "Formally observing another instructor's class.",
+  testProctor: 'Proctoring a test or leading a post-test critique.',
+  ocEventAdmin: 'Schoolhouse admin: PERSTAT, SIR, 806, scheduling.',
+  unitDuties: 'Unit/command tasks: formations, MLI sync, collateral duties.',
+  langMentor: 'Language mentoring for non-students.',
   proDevPme: 'Formal PME, SLTE, courses, certifications, workshops.',
-  postComm: 'Command-approved post/community events: Language Day, MWR, volunteer events.',
+  postComm: 'Command-approved post/community events.',
+  absence: 'Hours of approved absence from duties.',
 };
 
-// ─── System Prompt ──────────────────────────────────────────────────────────
+// ─── System Prompt ───────────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `You are an assistant that helps Military Language Instructors (MLIs) at DLIFLC categorize their weekly work hours.
 
-const SYSTEM_PROMPT = `You are an assistant that helps Military Language Instructors (MLIs) at DLIFLC categorize their weekly work hours into the correct form categories.
+## Form Structure
 
-## Your Job
-Parse the MLI's natural language description of their work week and map each activity to the correct category, day, and hour count. Return structured JSON that the form can consume.
+### Platform Teaching Contact Hours (TCH) — by team
+Each row = one team you worked with. Aggregate hours per team across the week.
+Columns: teamDsg, fullSect, splitSect, specAsst, suppleHours
 
-## CRITICAL RULES
-1. When you can confidently classify, DO IT. Do not ask for confirmation on high-confidence classifications.
-2. When genuinely ambiguous, ask exactly ONE clarifying question targeting the single piece of information that resolves it.
-3. Default group instruction to Full Sect unless explicitly stated otherwise.
-4. Test critiques default to 2 hours.
-5. Zero hour (0700) sessions are always Spec Asst.
-6. PERSTAT/SIR/806 is always OC Event Admin Spt, 1 hour.
-7. MLI Sync is always Unit Duties.
-8. SLS/EI sessions are Acad Advise.
+### Non-Platform Schoolhouse Hours — weekly totals
+Categories: classPrep, matlsDev, matlsReview, acadAdvise, discCounsel, mliInstMentor, classObserve, testProctor, ocEventAdmin
 
-## Category IDs and Sections
-Platform TCH: fullSect, splitSect, specAsst, supple
-Non-Platform: classPrep, matlsDev, matlsReview, acadAdvise, discCounsel, mliInstMentor, classObserve, testProctor, ocEventAdmin
-Unit Hours: unitDuties, langMentor, proDevPme, postComm
+### Unit Hours — weekly totals
+Categories: unitDuties, langMentor, proDevPme, postComm, absence
 
-## Classification Decision Tree
-Q1: Was the MLI teaching or directly supporting instruction with students present?
-- YES:
-  - Full group, core hours -> fullSect
-  - Subgroup split from multi-team section -> splitSect
-  - Individual student + curriculum content -> specAsst
-  - Individual student + discussing performance -> acadAdvise
-  - Full group, beyond core hours (4th hour, supplemental) -> supple
-- NO, academic/schoolhouse-related:
-  - Preparing for a specific lesson -> classPrep
-  - Creating new materials -> matlsDev
-  - Reviewing existing materials -> matlsReview
-  - EI/SLS/academic standing discussion -> acadAdvise
-  - Behavioral counseling -> discCounsel
-  - Helping a fellow instructor -> mliInstMentor
-  - Formal class observation with rubric -> classObserve
-  - Proctoring or critiquing a test -> testProctor
-  - Schoolhouse admin (PERSTAT/SIR/806/scheduling/awards) -> ocEventAdmin
-- NO, military/unit-directed:
-  - Unit meeting, formation, collateral duty, MLI sync -> unitDuties
-  - Language support for non-students -> langMentor
-  - Formal PME/SLTE/course -> proDevPme
-  - Command-approved post/community event -> postComm
-
-## Disambiguation Questions (ask only ONE, only when needed)
-1. "Were you teaching content, or discussing the student's performance?" -> specAsst vs acadAdvise
-2. "Was this directed by the schoolhouse or by your unit?" -> ocEventAdmin vs unitDuties
-3. "Was this with the full group or an individual student?" -> fullSect vs specAsst
-4. "Were you creating new materials or reviewing existing ones?" -> matlsDev vs matlsReview
-
-## Hard Boundaries
-- Single-team class codes: all group instruction = fullSect (no splitSect possible)
-- Homework non-completion counseling = discCounsel (behavioral, not academic)
-- Failing a test = acadAdvise (academic, not behavioral)
-- OPI prep with a student = specAsst
-- Teaching test strategies to a group = supple (not testProctor)
-- Informal instructor help (no rubric) = mliInstMentor (not classObserve)
+## Classification Rules
+- Default group instruction -> fullSect unless stated otherwise
+- Test critiques default 2 hours -> testProctor
+- Zero hour (0700) -> specAsst
+- PERSTAT/SIR/806 -> ocEventAdmin, 1 hour
+- MLI Sync -> unitDuties
+- SLS/EI sessions -> acadAdvise
+- Single-team class codes: all group = fullSect (no splitSect)
+- Homework non-completion counseling = discCounsel
+- Failing a test = acadAdvise
+- OPI prep with student = specAsst
+- Teaching test strategies to group = suppleHours
+- Informal instructor help = mliInstMentor
 - Language Day = postComm
-- PERSTAT/SIR/806 = ocEventAdmin, always 1 hour
-- Test critiques = testProctor, default 2 hours
-- Zero hour (0700) = specAsst
-- MLI Sync = unitDuties
+
+## Decision Tree
+Teaching students?
+  Full group core hours -> fullSect
+  Subgroup split -> splitSect
+  Individual curriculum -> specAsst
+  Individual performance discussion -> acadAdvise
+  Full group beyond core -> suppleHours
+Academic/schoolhouse, not teaching?
+  Lesson prep -> classPrep
+  Creating materials -> matlsDev
+  Reviewing materials -> matlsReview
+  EI/SLS/academic standing -> acadAdvise
+  Behavioral counseling -> discCounsel
+  Mentoring instructor -> mliInstMentor
+  Formal observation -> classObserve
+  Proctoring/critique -> testProctor
+  Admin (PERSTAT/SIR/806) -> ocEventAdmin
+Military/unit-directed?
+  Formations/sync/collateral -> unitDuties
+  Language support non-students -> langMentor
+  PME/SLTE/courses -> proDevPme
+  Post/community events -> postComm
+
+## When ambiguous, ask ONE clarifying question. When clear, classify directly.
 
 ## Response Format
-Always respond with a brief conversational message, then include a JSON block wrapped in \`\`\`json code fences.
-
-If you have entries to propose:
+Brief conversational summary, then JSON in \`\`\`json fences:
 \`\`\`json
 {
-  "entries": [
-    { "day": "Mon", "category": "fullSect", "section": "platform", "hours": 3, "confidence": "high", "reasoning": "Teaching full section A3" }
+  "platformRows": [
+    { "teamDsg": "A3", "fullSect": 6, "splitSect": 0, "specAsst": 1, "suppleHours": 0 }
   ],
-  "clarification_needed": false
+  "nonPlatform": { "classPrep": 1, "ocEventAdmin": 1 },
+  "unitHours": { "unitDuties": 3 },
+  "clarification_needed": false,
+  "confidence": "high"
 }
 \`\`\`
 
-If you need clarification:
+Rules:
+- Only include non-zero values in nonPlatform and unitHours objects
+- platformRows: one row per team, aggregate all hours for that team across the week
+- Valid teamDsg values: ${ALL_TEAMS.join(', ')}
+- Keep responses concise and military-professional
+- If processing Excel/spreadsheet data, interpret all data and map to form fields
+- confidence: "high" or "low" (low = needs user confirmation before applying)
+
+If clarification needed:
 \`\`\`json
 {
-  "entries": [],
+  "platformRows": [],
+  "nonPlatform": {},
+  "unitHours": {},
   "clarification_needed": true,
-  "question": "Were you teaching content, or discussing the student's performance?"
+  "question": "Were you teaching content or discussing performance?"
 }
-\`\`\`
+\`\`\``;
 
-Valid days: Mon, Tue, Wed, Thu, Fri
-Valid categories: fullSect, splitSect, specAsst, supple, classPrep, matlsDev, matlsReview, acadAdvise, discCounsel, mliInstMentor, classObserve, testProctor, ocEventAdmin, unitDuties, langMentor, proDevPme, postComm
-Valid sections: platform, nonPlatform, unit
-
-Hours should be positive numbers (can be decimals like 0.5 for half hours).
-Keep your conversational responses concise and military-professional. Summarize what you mapped and why.`;
-
-// ─── Firebase Init ──────────────────────────────────────────────────────────
-
+// ─── Firebase Init ───────────────────────────────────────────────────────────
 let firebaseAuth = null;
 let aiModel = null;
 
@@ -219,29 +194,28 @@ if (IS_CONFIGURED) {
   aiModel = getGenerativeModel(ai, {
     model: 'gemini-2.5-flash',
     systemInstruction: SYSTEM_PROMPT,
-    generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+    generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
   });
 }
 
-// ─── Utilities ──────────────────────────────────────────────────────────────
-
-function getSundayForWeek(dateStr) {
+// ─── Utilities ───────────────────────────────────────────────────────────────
+function computeSunday(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() - d.getDay());
   return d.toISOString().split('T')[0];
 }
 
-function formatSunday(dateStr) {
-  if (!dateStr) return '';
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+function formatDate(isoStr) {
+  if (!isoStr) return '';
+  return new Date(isoStr + 'T00:00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function initGrid() {
-  const grid = {};
-  ALL_CATEGORIES.forEach(c => { grid[c.id] = {}; DAYS.forEach(d => { grid[c.id][d] = 0; }); });
-  return grid;
-}
+function emptyRow() { return { teamDsg: '', fullSect: 0, splitSect: 0, specAsst: 0, suppleHours: 0 }; }
+function emptyNP() { const o = {}; NON_PLATFORM_CATS.forEach(c => o[c.id] = 0); return o; }
+function emptyUH() { const o = {}; UNIT_CATS.forEach(c => o[c.id] = 0); return o; }
+function rowTotal(r) { return (r.fullSect||0) + (r.splitSect||0) + (r.specAsst||0) + (r.suppleHours||0); }
+function sumObj(o) { return Object.values(o).reduce((s, v) => s + (v||0), 0); }
 
 function parseAIResponse(text) {
   const match = text.match(/```json\s*([\s\S]*?)```/);
@@ -249,8 +223,82 @@ function parseAIResponse(text) {
   try { return JSON.parse(match[1]); } catch { return null; }
 }
 
-// ─── Auth Context ───────────────────────────────────────────────────────────
+function parseExcelToText(data) {
+  const wb = XLSX.read(data, { type: 'array' });
+  let text = '';
+  wb.SheetNames.forEach(name => {
+    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[name]);
+    text += `Sheet: ${name}\n${csv}\n\n`;
+  });
+  return text.trim();
+}
 
+// ─── PDF Export ──────────────────────────────────────────────────────────────
+async function exportPDF(formData) {
+  const { PDFDocument } = await import('https://esm.sh/pdf-lib@1.17.1');
+  const templateBytes = await fetch(new URL('template.pdf', window.location.href).href).then(r => r.arrayBuffer());
+  const pdf = await PDFDocument.load(templateBytes);
+  const form = pdf.getForm();
+
+  const set = (name, val) => {
+    try {
+      const f = form.getTextField(name);
+      if (val !== undefined && val !== null && val !== '') f.setText(String(val));
+    } catch {}
+  };
+
+  set('Name', formData.name);
+  set('Sunday Date', formData.sundayFormatted);
+
+  // Platform TCH rows
+  formData.platformRows.forEach((row, i) => {
+    const n = i + 1;
+    if (!row.teamDsg) return;
+    set(n === 1 ? 'Team Dsg 1' : `Team Dsg${n}`, row.teamDsg);
+    set(`Team Code${n}`, TEAM_CODE);
+    set(`Full SectRow${n}`, row.fullSect || '');
+    set(`Split SectRow${n}`, row.splitSect || '');
+    set(`Spec AsstRow${n}`, row.specAsst || '');
+    set(`Supple HoursRow${n}`, row.suppleHours || '');
+    set(`Total TCHRow${n}`, rowTotal(row));
+  });
+
+  const pTotal = formData.platformRows.reduce((s, r) => s + rowTotal(r), 0);
+  set('Total TCHRow11', pTotal);
+
+  // Non-Platform
+  const npMap = {
+    classPrep: 'Class Prep', matlsDev: 'Matls Development', matlsReview: 'Matls Review',
+    acadAdvise: 'Acad Advise', discCounsel: 'Disc Counsel', mliInstMentor: 'MLI Inst Mentor',
+    classObserve: 'Class Observe', testProctor: 'Test Proctor', ocEventAdmin: 'OC Event Admin Spt',
+  };
+  Object.entries(npMap).forEach(([k, field]) => set(field, formData.nonPlatform[k] || ''));
+  const npTotal = sumObj(formData.nonPlatform);
+  set('NonPlatform Total', npTotal);
+
+  // Unit Hours
+  const uhMap = { unitDuties: 'Unit Duties', langMentor: 'Lang Mentor', proDevPme: 'Pro Dev PME', postComm: 'Post Events', absence: 'Absence' };
+  Object.entries(uhMap).forEach(([k, field]) => set(field, formData.unitHours[k] || ''));
+  const uhTotal = sumObj(formData.unitHours);
+  set('Total Unit Hrs', uhTotal);
+
+  // Summary
+  set('Total Platform TCH', pTotal);
+  set('Total NonPlatform Hou', npTotal);
+  set('Total Unit Hours', uhTotal);
+  set('Total Weekly Hours', pTotal + npTotal + uhTotal);
+
+  const pdfBytes = await pdf.save();
+  const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `MLI_Weekly_Hours_${formData.sundayISO || 'blank'}.pdf`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── Auth Context ────────────────────────────────────────────────────────────
 const AuthContext = createContext(null);
 const useAuth = () => useContext(AuthContext);
 
@@ -260,127 +308,123 @@ function AuthProvider({ children }) {
 
   useEffect(() => {
     if (!firebaseAuth) { setLoading(false); return; }
-    return onAuthStateChanged(firebaseAuth, (u) => {
-      setUser(u);
-      setLoading(false);
-    });
+    return onAuthStateChanged(firebaseAuth, u => { setUser(u); setLoading(false); });
   }, []);
 
   const signIn = useCallback(async () => {
     if (!firebaseAuth) return;
-    try {
-      await signInWithPopup(firebaseAuth, new GoogleAuthProvider());
-    } catch (err) {
-      console.error('Sign-in failed:', err);
-    }
+    try { await signInWithPopup(firebaseAuth, new GoogleAuthProvider()); }
+    catch (err) { console.error('Sign-in failed:', err); }
   }, []);
 
-  const signOut = useCallback(async () => {
-    if (!firebaseAuth) return;
-    await firebaseSignOut(firebaseAuth);
-  }, []);
+  const signOut = useCallback(async () => { if (firebaseAuth) await firebaseSignOut(firebaseAuth); }, []);
 
   return html`<${AuthContext.Provider} value=${{ user, loading, signIn, signOut }}>${children}</${AuthContext.Provider}>`;
 }
 
-// ─── Components ─────────────────────────────────────────────────────────────
-
-function Header({ name, setName, team, setTeam, classCode, setClassCode, weekDate, setWeekDate, sunday, onClear }) {
-  const handleTeamChange = (val) => { setTeam(val); if (TEAM_TO_CODE[val]) setClassCode(TEAM_TO_CODE[val]); };
-  const handleCodeChange = (val) => {
-    setClassCode(val);
-    if (CLASS_CODES[val]?.length === 1) setTeam(CLASS_CODES[val][0]); else setTeam('');
-  };
-
+// ─── Form Components ─────────────────────────────────────────────────────────
+function Header({ name, setName, weekDate, setWeekDate, sunday, onClear, onExport }) {
   return html`
-    <div className="bg-mil-700 text-white p-4 print:bg-black print:text-black">
+    <div className="bg-mil-700 text-white p-4">
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold tracking-wide">DLIFLC — MLI WEEKLY HOURS</h1>
-          <span className="text-mil-200 text-sm">Arabic School</span>
+        <div>
+          <h1 className="text-lg font-bold tracking-wide">MLI WEEKLY HOURS</h1>
+          <span className="text-mil-200 text-xs">DLIFLC — Arabic School</span>
         </div>
         <div className="flex gap-2 no-print">
           <button onClick=${onClear} className="px-3 py-1 bg-mil-800 hover:bg-mil-900 rounded text-sm">Clear</button>
-          <button onClick=${() => window.print()} className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-sm font-semibold">Export PDF</button>
+          <button onClick=${onExport} className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-sm font-semibold">Export PDF</button>
         </div>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+      <div className="grid grid-cols-2 gap-3 text-sm">
         <div>
-          <label className="block text-mil-200 text-xs mb-1">MLI Name</label>
+          <label className="block text-mil-200 text-xs mb-1">Name</label>
           <input value=${name} onChange=${e => setName(e.target.value)} placeholder="Last, First RANK"
-            className="w-full bg-mil-800 border border-mil-500 rounded px-2 py-1 text-white placeholder-mil-200 print:bg-white print:text-black print:border-black" />
+            className="w-full bg-mil-800 border border-mil-500 rounded px-2 py-1 text-white placeholder-mil-200" />
         </div>
         <div>
-          <label className="block text-mil-200 text-xs mb-1">Team Dsg</label>
-          <select value=${team} onChange=${e => handleTeamChange(e.target.value)}
-            className="w-full bg-mil-800 border border-mil-500 rounded px-2 py-1 text-white print:bg-white print:text-black print:border-black">
-            <option value="">Select...</option>
-            ${ALL_TEAMS.map(t => html`<option key=${t} value=${t}>${t}</option>`)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-mil-200 text-xs mb-1">Class Code</label>
-          <select value=${classCode} onChange=${e => handleCodeChange(e.target.value)}
-            className="w-full bg-mil-800 border border-mil-500 rounded px-2 py-1 text-white print:bg-white print:text-black print:border-black">
-            <option value="">Select...</option>
-            ${Object.keys(CLASS_CODES).sort().map(c => html`<option key=${c} value=${c}>${c} (${CLASS_CODES[c].join(', ')})</option>`)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-mil-200 text-xs mb-1">Team Code</label>
-          <input value="15026" readOnly className="w-full bg-mil-900 border border-mil-500 rounded px-2 py-1 text-mil-200 print:bg-white print:text-black print:border-black" />
-        </div>
-        <div>
-          <label className="block text-mil-200 text-xs mb-1">Week Of (Sunday: ${sunday ? formatSunday(sunday) : '—'})</label>
+          <label className="block text-mil-200 text-xs mb-1">Week Of${sunday ? ` (Sunday: ${formatDate(sunday)})` : ''}</label>
           <input type="date" value=${weekDate} onChange=${e => setWeekDate(e.target.value)}
-            className="w-full bg-mil-800 border border-mil-500 rounded px-2 py-1 text-white print:bg-white print:text-black print:border-black" />
+            className="w-full bg-mil-800 border border-mil-500 rounded px-2 py-1 text-white" />
         </div>
       </div>
     </div>`;
 }
 
-function HourCell({ value, onChange, highlight }) {
+function HourInput({ value, onChange, title }) {
   return html`<input type="number" min="0" max="24" step="0.5"
     value=${value || ''} onChange=${e => onChange(parseFloat(e.target.value) || 0)}
-    className=${`w-14 h-8 text-center text-sm border rounded focus:outline-none focus:ring-2 focus:ring-mil-500 print:border-black print:bg-white ${highlight ? 'bg-yellow-100 border-yellow-400' : 'border-gray-300 bg-white'}`} />`;
+    title=${title || ''}
+    className="w-full h-8 text-center text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-mil-500 bg-white" />`;
 }
 
-function SectionGrid({ section, grid, setGrid, highlights }) {
-  const rowTotal = (catId) => DAYS.reduce((s, d) => s + (grid[catId]?.[d] || 0), 0);
-  const colTotal = (day) => section.categories.reduce((s, c) => s + (grid[c.id]?.[day] || 0), 0);
-  const sectionTotal = section.categories.reduce((s, c) => s + rowTotal(c.id), 0);
-  const updateCell = (catId, day, val) => setGrid(prev => ({ ...prev, [catId]: { ...prev[catId], [day]: val } }));
+function PlatformTCH({ rows, setRows, classCode, setClassCode }) {
+  const addRow = () => { if (rows.length < 10) setRows([...rows, emptyRow()]); };
+  const removeRow = (i) => { if (rows.length > 1) setRows(rows.filter((_, j) => j !== i)); };
+  const updateRow = (i, field, val) => setRows(rows.map((r, j) => j === i ? { ...r, [field]: val } : r));
+  const grandTotal = rows.reduce((s, r) => s + rowTotal(r), 0);
 
-  const colors = { platform: 'border-green-600 bg-green-50', nonPlatform: 'border-blue-600 bg-blue-50', unit: 'border-amber-600 bg-amber-50' };
+  const handleClassCode = (code) => {
+    setClassCode(code);
+    if (!code || !CLASS_CODES[code]) return;
+    const teams = CLASS_CODES[code];
+    const newRows = teams.map(t => ({ ...emptyRow(), teamDsg: t }));
+    while (newRows.length < 1) newRows.push(emptyRow());
+    setRows(newRows);
+  };
 
   return html`
-    <div className=${`border-l-4 ${colors[section.id]} rounded-r mb-4 print-break-avoid`}>
-      <div className="px-3 py-2 font-semibold text-sm border-b border-gray-200">${section.title}</div>
+    <div className="border-l-4 border-green-600 bg-green-50 rounded-r mb-4">
+      <div className="px-3 py-2 font-semibold text-sm border-b border-gray-200 flex flex-wrap items-center justify-between gap-2">
+        <span>Platform Teaching Contact Hours (TCH)</span>
+        <div className="flex items-center gap-2 no-print">
+          <select value=${classCode} onChange=${e => handleClassCode(e.target.value)}
+            className="text-xs border border-gray-300 rounded px-1 py-0.5 bg-white text-gray-700" title="Auto-fill teams from class code">
+            <option value="">Class Code...</option>
+            ${Object.keys(CLASS_CODES).sort().map(c => html`<option key=${c} value=${c}>${c} (${CLASS_CODES[c].join(', ')})</option>`)}
+          </select>
+          ${rows.length < 10 && html`
+            <button onClick=${addRow} className="text-xs px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700">+ Row</button>
+          `}
+        </div>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-gray-500">
-              <th className="text-left pl-3 py-1 w-36">Category</th>
-              ${DAYS.map(d => html`<th key=${d} className="py-1 w-14 text-center">${d}</th>`)}
+              <th className="text-left pl-3 py-1 w-24">Team Dsg</th>
+              <th className="py-1 w-16 text-center">Full Sect</th>
+              <th className="py-1 w-16 text-center">Split Sect</th>
+              <th className="py-1 w-16 text-center">Spec Asst</th>
+              <th className="py-1 w-16 text-center">Supple Hrs</th>
               <th className="py-1 w-14 text-center font-bold">Total</th>
+              <th className="py-1 w-8 no-print"></th>
             </tr>
           </thead>
           <tbody>
-            ${section.categories.map(cat => html`
-              <tr key=${cat.id} className="border-t border-gray-100 hover:bg-white/50">
-                <td className="pl-3 py-1 text-xs font-medium text-gray-700" title=${CATEGORY_DEFS[cat.id]}>${cat.label}</td>
-                ${DAYS.map(d => html`
-                  <td key=${d} className="py-1 text-center">
-                    <${HourCell} value=${grid[cat.id]?.[d]} onChange=${v => updateCell(cat.id, d, v)} highlight=${highlights?.has(`${cat.id}-${d}`)} />
-                  </td>
-                `)}
-                <td className="py-1 text-center font-semibold text-sm">${rowTotal(cat.id) || ''}</td>
+            ${rows.map((row, i) => html`
+              <tr key=${i} className="border-t border-gray-100">
+                <td className="pl-3 py-1">
+                  <select value=${row.teamDsg} onChange=${e => updateRow(i, 'teamDsg', e.target.value)}
+                    className="w-full h-8 text-sm border border-gray-300 rounded bg-white">
+                    <option value="">--</option>
+                    ${ALL_TEAMS.map(t => html`<option key=${t} value=${t}>${t}</option>`)}
+                  </select>
+                </td>
+                <td className="py-1 px-1"><${HourInput} value=${row.fullSect} onChange=${v => updateRow(i, 'fullSect', v)} /></td>
+                <td className="py-1 px-1"><${HourInput} value=${row.splitSect} onChange=${v => updateRow(i, 'splitSect', v)} /></td>
+                <td className="py-1 px-1"><${HourInput} value=${row.specAsst} onChange=${v => updateRow(i, 'specAsst', v)} /></td>
+                <td className="py-1 px-1"><${HourInput} value=${row.suppleHours} onChange=${v => updateRow(i, 'suppleHours', v)} /></td>
+                <td className="py-1 text-center font-semibold">${rowTotal(row) || ''}</td>
+                <td className="py-1 text-center no-print">
+                  ${rows.length > 1 && html`<button onClick=${() => removeRow(i)} className="text-red-400 hover:text-red-600 text-lg leading-none">x</button>`}
+                </td>
               </tr>
             `)}
             <tr className="border-t-2 border-gray-300 bg-gray-50 font-semibold">
-              <td className="pl-3 py-1 text-xs">${section.shortTitle} Total</td>
-              ${DAYS.map(d => html`<td key=${d} className="py-1 text-center text-sm">${colTotal(d) || ''}</td>`)}
-              <td className="py-1 text-center text-sm font-bold">${sectionTotal || ''}</td>
+              <td className="pl-3 py-2 text-xs" colSpan="5">Platform TCH Total</td>
+              <td className="py-2 text-center font-bold">${grandTotal || ''}</td>
+              <td></td>
             </tr>
           </tbody>
         </table>
@@ -388,11 +432,58 @@ function SectionGrid({ section, grid, setGrid, highlights }) {
     </div>`;
 }
 
-function Summary({ grid }) {
-  const st = (sid) => { const sec = SECTIONS.find(s => s.id === sid); return sec.categories.reduce((s, c) => s + DAYS.reduce((ds, d) => ds + (grid[c.id]?.[d] || 0), 0), 0); };
-  const p = st('platform'), np = st('nonPlatform'), u = st('unit'), t = p + np + u;
+function NonPlatformSection({ data, setData }) {
+  const update = (k, v) => setData({ ...data, [k]: v });
+  const total = sumObj(data);
+
   return html`
-    <div className="bg-gray-100 border rounded p-3 mb-4 print-break-avoid">
+    <div className="border-l-4 border-blue-600 bg-blue-50 rounded-r mb-4">
+      <div className="px-3 py-2 font-semibold text-sm border-b border-gray-200">Non-Platform Schoolhouse Hours</div>
+      <div className="p-3 grid grid-cols-2 sm:grid-cols-5 gap-3">
+        ${NON_PLATFORM_CATS.map(cat => html`
+          <div key=${cat.id}>
+            <label className="block text-xs text-gray-600 mb-1 truncate" title=${CATEGORY_DEFS[cat.id]}>${cat.label}</label>
+            <${HourInput} value=${data[cat.id]} onChange=${v => update(cat.id, v)} title=${CATEGORY_DEFS[cat.id]} />
+          </div>
+        `)}
+        <div>
+          <label className="block text-xs font-bold text-gray-700 mb-1">Total</label>
+          <div className="h-8 flex items-center justify-center font-bold text-sm bg-gray-100 rounded border border-gray-300">${total || '—'}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function UnitHoursSection({ data, setData }) {
+  const update = (k, v) => setData({ ...data, [k]: v });
+  const total = sumObj(data);
+
+  return html`
+    <div className="border-l-4 border-amber-600 bg-amber-50 rounded-r mb-4">
+      <div className="px-3 py-2 font-semibold text-sm border-b border-gray-200">Unit Hours</div>
+      <div className="p-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+        ${UNIT_CATS.map(cat => html`
+          <div key=${cat.id}>
+            <label className="block text-xs text-gray-600 mb-1 truncate" title=${CATEGORY_DEFS[cat.id]}>${cat.label}</label>
+            <${HourInput} value=${data[cat.id]} onChange=${v => update(cat.id, v)} title=${CATEGORY_DEFS[cat.id]} />
+          </div>
+        `)}
+        <div>
+          <label className="block text-xs font-bold text-gray-700 mb-1">Total</label>
+          <div className="h-8 flex items-center justify-center font-bold text-sm bg-gray-100 rounded border border-gray-300">${total || '—'}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function Summary({ platformRows, nonPlatform, unitHours }) {
+  const p = platformRows.reduce((s, r) => s + rowTotal(r), 0);
+  const np = sumObj(nonPlatform);
+  const u = sumObj(unitHours);
+  const t = p + np + u;
+
+  return html`
+    <div className="bg-gray-100 border rounded p-3 mb-4">
       <div className="grid grid-cols-4 gap-4 text-center text-sm">
         <div><div className="text-xs text-gray-500">Platform TCH</div><div className="font-bold text-lg text-green-700">${p || '—'}</div></div>
         <div><div className="text-xs text-gray-500">Non-Platform</div><div className="font-bold text-lg text-blue-700">${np || '—'}</div></div>
@@ -402,43 +493,13 @@ function Summary({ grid }) {
     </div>`;
 }
 
-function AbsenceAndSignatures({ absence, setAbsence }) {
-  return html`
-    <div className="border rounded p-3 mb-4 text-sm print-break-avoid">
-      <div className="mb-3">
-        <label className="block text-xs text-gray-500 mb-1">Absence (explain any missed hours)</label>
-        <input value=${absence} onChange=${e => setAbsence(e.target.value)} placeholder="N/A"
-          className="w-full border border-gray-300 rounded px-2 py-1 print:border-black" />
-      </div>
-      <div className="grid grid-cols-2 gap-6 mt-4 print-only">
-        <div>
-          <div className="border-b border-black mb-1 h-8"></div>
-          <div className="flex justify-between text-xs text-gray-500"><span>MLI Signature</span><span>Date</span></div>
-        </div>
-        <div>
-          <div className="border-b border-black mb-1 h-8"></div>
-          <div className="flex justify-between text-xs text-gray-500"><span>CMLI/ACMLI Signature</span><span>Date</span></div>
-        </div>
-      </div>
-    </div>`;
-}
-
+// ─── Chat Components ─────────────────────────────────────────────────────────
 function ChatMessage({ msg }) {
   const isUser = msg.role === 'user';
   return html`
     <div className=${`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
       <div className=${`max-w-[85%] rounded-lg px-3 py-2 text-sm ${isUser ? 'bg-mil-700 text-white' : 'bg-gray-100 text-gray-800'}`}>
         <div className="whitespace-pre-wrap">${msg.display || msg.content}</div>
-        ${msg.entries?.length > 0 && html`
-          <div className="mt-2 border-t border-gray-200 pt-2">
-            ${msg.entries.map((e, i) => html`
-              <div key=${i} className=${`text-xs py-0.5 ${e.confidence === 'high' ? 'text-green-700' : e.confidence === 'medium' ? 'text-yellow-700' : 'text-red-700'}`}>
-                ${e.day} → ${ALL_CATEGORIES.find(c => c.id === e.category)?.label || e.category}: ${e.hours}h
-                ${e.confidence !== 'high' && ` (${e.confidence})`}
-              </div>
-            `)}
-          </div>
-        `}
         ${msg.pending && html`
           <div className="mt-2 flex gap-2">
             <button onClick=${msg.onAccept} className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700">Accept</button>
@@ -450,20 +511,27 @@ function ChatMessage({ msg }) {
 }
 
 function CategoryReference({ expanded, setExpanded }) {
+  const groups = [
+    { title: 'Platform TCH', items: [
+      { l: 'Full Sect', d: CATEGORY_DEFS.fullSect }, { l: 'Split Sect', d: CATEGORY_DEFS.splitSect },
+      { l: 'Spec Asst', d: CATEGORY_DEFS.specAsst }, { l: 'Supple Hrs', d: CATEGORY_DEFS.suppleHours },
+    ]},
+    { title: 'Non-Platform', items: NON_PLATFORM_CATS.map(c => ({ l: c.label, d: CATEGORY_DEFS[c.id] })) },
+    { title: 'Unit Hours', items: UNIT_CATS.map(c => ({ l: c.label, d: CATEGORY_DEFS[c.id] })) },
+  ];
+
   return html`
     <div className="border-t border-gray-200 no-print">
       <button onClick=${() => setExpanded(!expanded)} className="w-full text-left px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-50 flex justify-between items-center">
-        Category Reference ${expanded ? '▲' : '▼'}
+        Category Reference ${expanded ? String.fromCharCode(9650) : String.fromCharCode(9660)}
       </button>
       ${expanded && html`
         <div className="px-3 pb-3 max-h-60 overflow-y-auto">
-          ${SECTIONS.map(s => html`
-            <div key=${s.id} className="mb-2">
-              <div className="text-xs font-bold text-gray-600 mb-1">${s.shortTitle}</div>
-              ${s.categories.map(c => html`
-                <div key=${c.id} className="text-xs text-gray-500 mb-0.5">
-                  <span className="font-medium text-gray-700">${c.label}:</span> ${CATEGORY_DEFS[c.id]}
-                </div>
+          ${groups.map(g => html`
+            <div key=${g.title} className="mb-2">
+              <div className="text-xs font-bold text-gray-600 mb-1">${g.title}</div>
+              ${g.items.map(c => html`
+                <div key=${c.l} className="text-xs text-gray-500 mb-0.5"><span className="font-medium text-gray-700">${c.l}:</span> ${c.d}</div>
               `)}
             </div>
           `)}
@@ -472,27 +540,9 @@ function CategoryReference({ expanded, setExpanded }) {
     </div>`;
 }
 
-function SetupGuide() {
-  return html`
-    <div className="px-3 py-4 text-xs text-gray-600 space-y-2">
-      <div className="font-semibold text-gray-800">Firebase Setup Required</div>
-      <ol className="list-decimal pl-4 space-y-1">
-        <li>Go to <a href="https://console.firebase.google.com" target="_blank" className="text-blue-600 underline">Firebase Console</a></li>
-        <li>Create a project (or add Firebase to your existing Google Cloud project)</li>
-        <li>Go to <b>Firebase AI Logic</b> page and click <b>Get started</b></li>
-        <li>Go to <b>Authentication</b> → <b>Sign-in method</b> → Enable <b>Google</b></li>
-        <li>Go to <b>Project Settings</b> → <b>Your apps</b> → Add a <b>Web app</b></li>
-        <li>Copy the <code>firebaseConfig</code> object</li>
-        <li>Paste it into the <code>FIREBASE_CONFIG</code> at the top of this file</li>
-      </ol>
-      <div className="text-gray-400 mt-2">The form works without setup — only the AI chat needs Firebase.</div>
-    </div>`;
-}
-
 function AuthPanel() {
   const { user, loading, signIn, signOut } = useAuth();
-
-  if (!IS_CONFIGURED) return html`<${SetupGuide} />`;
+  if (!IS_CONFIGURED) return html`<div className="px-3 py-3 text-xs text-gray-500 text-center">Firebase not configured.</div>`;
   if (loading) return html`<div className="px-3 py-3 text-xs text-gray-400 text-center">Loading...</div>`;
 
   if (user) {
@@ -501,7 +551,6 @@ function AuthPanel() {
         ${user.photoURL && html`<img src=${user.photoURL} alt="" className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />`}
         <div className="flex-1 min-w-0">
           <div className="text-xs font-medium text-gray-700 truncate">${user.displayName}</div>
-          <div className="text-xs text-gray-400 truncate">${user.email}</div>
         </div>
         <button onClick=${signOut} className="text-xs text-gray-400 hover:text-gray-600">Sign out</button>
       </div>`;
@@ -518,97 +567,148 @@ function AuthPanel() {
     </div>`;
 }
 
-function ChatSidebar({ grid, setGrid, onClear: resetChat }) {
+function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatform, unitHours, setUnitHours, resetKey }) {
   const { user } = useAuth();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [refExpanded, setRefExpanded] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const chatRef = useRef(null);
   const chatEndRef = useRef(null);
-
-  // Create new chat session when user signs in or chat is reset
-  useEffect(() => {
-    if (aiModel && user) {
-      chatRef.current = aiModel.startChat();
-    } else {
-      chatRef.current = null;
-    }
-  }, [user, resetChat]);
+  const fileRef = useRef(null);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+    chatRef.current = (aiModel && user) ? aiModel.startChat() : null;
+  }, [user, resetKey]);
 
-  const applyEntries = useCallback((entries) => {
-    setGrid(prev => {
-      const next = { ...prev };
-      entries.forEach(e => {
-        if (next[e.category] && DAYS.includes(e.day)) {
-          next[e.category] = { ...next[e.category], [e.day]: (next[e.category][e.day] || 0) + e.hours };
-        }
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, loading]);
+
+  const applyAIData = useCallback((data) => {
+    if (data.platformRows?.length) {
+      setPlatformRows(prev => {
+        let next = [...prev];
+        data.platformRows.forEach(newRow => {
+          if (!newRow.teamDsg) return;
+          const idx = next.findIndex(r => r.teamDsg === newRow.teamDsg);
+          if (idx >= 0) {
+            next[idx] = {
+              ...next[idx],
+              fullSect: (next[idx].fullSect||0) + (newRow.fullSect||0),
+              splitSect: (next[idx].splitSect||0) + (newRow.splitSect||0),
+              specAsst: (next[idx].specAsst||0) + (newRow.specAsst||0),
+              suppleHours: (next[idx].suppleHours||0) + (newRow.suppleHours||0),
+            };
+          } else {
+            const emptyIdx = next.findIndex(r => !r.teamDsg);
+            if (emptyIdx >= 0) next[emptyIdx] = { teamDsg: newRow.teamDsg, fullSect: newRow.fullSect||0, splitSect: newRow.splitSect||0, specAsst: newRow.specAsst||0, suppleHours: newRow.suppleHours||0 };
+            else if (next.length < 10) next.push({ teamDsg: newRow.teamDsg, fullSect: newRow.fullSect||0, splitSect: newRow.splitSect||0, specAsst: newRow.specAsst||0, suppleHours: newRow.suppleHours||0 });
+          }
+        });
+        return next;
       });
-      return next;
-    });
-  }, [setGrid]);
+    }
+    if (data.nonPlatform) {
+      setNonPlatform(prev => {
+        const next = { ...prev };
+        Object.entries(data.nonPlatform).forEach(([k, v]) => { if (k in next) next[k] = (next[k]||0) + (v||0); });
+        return next;
+      });
+    }
+    if (data.unitHours) {
+      setUnitHours(prev => {
+        const next = { ...prev };
+        Object.entries(data.unitHours).forEach(([k, v]) => { if (k in next) next[k] = (next[k]||0) + (v||0); });
+        return next;
+      });
+    }
+  }, [setPlatformRows, setNonPlatform, setUnitHours]);
 
-  const sendMessage = async () => {
-    if (!input.trim()) return;
-    const userMsg = { role: 'user', content: input.trim() };
+  const processResponse = (aiText, newMessages) => {
+    const parsed = parseAIResponse(aiText);
+    const display = aiText.replace(/```json[\s\S]*?```/g, '').trim();
+    const hasData = parsed && !parsed.clarification_needed &&
+      (parsed.platformRows?.length || Object.keys(parsed.nonPlatform||{}).length || Object.keys(parsed.unitHours||{}).length);
+
+    if (hasData) {
+      if (parsed.confidence === 'low') {
+        const msgObj = {
+          role: 'assistant', display, pending: true,
+          onAccept: () => { applyAIData(parsed); setMessages(prev => prev.map(m => m === msgObj ? { ...m, pending: false, display: m.display + '\n\nApplied to form.' } : m)); },
+          onReject: () => { setMessages(prev => prev.map(m => m === msgObj ? { ...m, pending: false, display: m.display + '\n\nRejected.' } : m)); },
+        };
+        setMessages([...newMessages, msgObj]);
+      } else {
+        applyAIData(parsed);
+        setMessages([...newMessages, { role: 'assistant', display: display + '\n\nApplied to form.' }]);
+      }
+    } else {
+      setMessages([...newMessages, { role: 'assistant', display }]);
+    }
+  };
+
+  const sendMessage = async (text) => {
+    const content = (text || input).trim();
+    if (!content) return;
+    const userMsg = { role: 'user', content };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
-    setInput('');
+    if (!text) setInput('');
 
     if (!chatRef.current) {
-      setMessages([...newMessages, {
-        role: 'assistant',
-        display: user ? 'AI service not available. Use the form manually with the Category Reference below.' : 'Sign in with Google to use the AI assistant. You can still fill the form manually.',
-      }]);
+      setMessages([...newMessages, { role: 'assistant', display: user ? 'AI not available.' : 'Sign in with Google to use the AI.' }]);
       return;
     }
 
     setLoading(true);
     try {
-      const result = await chatRef.current.sendMessage(userMsg.content);
-      const aiText = result.response.text();
-      const parsed = parseAIResponse(aiText);
-      const displayText = aiText.replace(/```json[\s\S]*?```/g, '').trim();
-
-      if (parsed?.entries?.length > 0) {
-        const hasLowConfidence = parsed.entries.some(e => e.confidence !== 'high');
-        if (hasLowConfidence) {
-          const msgObj = {
-            role: 'assistant', content: aiText, display: displayText, entries: parsed.entries, pending: true,
-            onAccept: () => { applyEntries(parsed.entries); setMessages(prev => prev.map(m => m === msgObj ? { ...m, pending: false, display: m.display + '\n\nApplied to form.' } : m)); },
-            onReject: () => { setMessages(prev => prev.map(m => m === msgObj ? { ...m, pending: false, display: m.display + '\n\nRejected.' } : m)); },
-          };
-          setMessages([...newMessages, msgObj]);
-        } else {
-          applyEntries(parsed.entries);
-          setMessages([...newMessages, { role: 'assistant', content: aiText, display: displayText + '\n\nApplied to form.', entries: parsed.entries }]);
-        }
-      } else {
-        setMessages([...newMessages, { role: 'assistant', content: aiText, display: displayText }]);
-      }
+      const result = await chatRef.current.sendMessage(content);
+      processResponse(result.response.text(), newMessages);
     } catch (err) {
-      const msg = err.message?.includes('429') ? 'Rate limit reached. Wait a moment and try again.' : `Error: ${err.message}`;
+      const msg = err.message?.includes('429') ? 'Rate limit reached. Wait a moment.' : `Error: ${err.message}`;
       setMessages([...newMessages, { role: 'assistant', display: msg }]);
-    } finally {
-      setLoading(false);
+    } finally { setLoading(false); }
+  };
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['xlsx', 'xls', 'csv'].includes(ext)) {
+      setMessages(prev => [...prev, { role: 'assistant', display: 'Please upload an Excel (.xlsx, .xls) or CSV file.' }]);
+      return;
+    }
+    try {
+      const data = new Uint8Array(await file.arrayBuffer());
+      const text = parseExcelToText(data);
+      if (!text.trim()) {
+        setMessages(prev => [...prev, { role: 'assistant', display: 'The file appears empty.' }]);
+        return;
+      }
+      sendMessage(`Here is a spreadsheet of my hours. Please classify each entry:\n\n${text}`);
+    } catch (err) {
+      setMessages(prev => [...prev, { role: 'assistant', display: `Failed to read file: ${err.message}` }]);
     }
   };
 
+  const handleDrop = (e) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); };
   const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 
   return html`
-    <div className="flex flex-col h-full no-print">
+    <div className="flex flex-col h-full no-print"
+      onDrop=${handleDrop} onDragOver=${e => { e.preventDefault(); setDragging(true); }} onDragLeave=${() => setDragging(false)}>
       <div className="px-3 py-2 bg-mil-700 text-white text-sm font-semibold">AI Assistant</div>
       <${AuthPanel} />
-      <div className="flex-1 overflow-y-auto p-3 space-y-1">
+      <div className=${`flex-1 overflow-y-auto p-3 space-y-1 relative ${dragging ? 'bg-blue-50' : ''}`}>
+        ${dragging && html`
+          <div className="absolute inset-0 flex items-center justify-center bg-blue-50/90 border-2 border-dashed border-blue-400 rounded z-10">
+            <div className="text-blue-600 font-semibold text-sm">Drop Excel file here</div>
+          </div>
+        `}
         ${messages.length === 0 && html`
           <div className="text-center text-gray-400 text-sm mt-8">
             <p className="mb-2">Tell me about your week and I'll fill the form.</p>
-            <p className="text-xs text-gray-300">Example: "Monday I taught A3 full section hours 1-3, then did PERSTAT Tuesday."</p>
+            <p className="text-xs text-gray-300 mb-3">Example: "I taught A3 full section 15 hours, did 2 hours class prep, and 1 hour PERSTAT."</p>
+            <p className="text-xs text-gray-300">Or drop/upload an Excel file with your hours.</p>
           </div>
         `}
         ${messages.map((m, i) => html`<${ChatMessage} key=${i} msg=${m} />`)}
@@ -618,11 +718,17 @@ function ChatSidebar({ grid, setGrid, onClear: resetChat }) {
       <div className="p-3 border-t">
         <div className="flex gap-2">
           <textarea value=${input} onChange=${e => setInput(e.target.value)} onKeyDown=${handleKeyDown}
-            placeholder=${user ? "Describe your hours..." : "Sign in to use AI, or fill manually..."}
+            placeholder=${user ? "Describe your hours or drop Excel..." : "Sign in to use AI..."}
             rows=${2} className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-mil-500" />
-          <button onClick=${sendMessage} disabled=${loading || !input.trim()}
-            className="px-3 py-1 bg-mil-600 text-white rounded text-sm hover:bg-mil-700 disabled:opacity-50 self-end">Send</button>
+          <div className="flex flex-col gap-1 self-end">
+            <button onClick=${() => sendMessage()} disabled=${loading || !input.trim()}
+              className="px-3 py-1 bg-mil-600 text-white rounded text-sm hover:bg-mil-700 disabled:opacity-50">Send</button>
+            <button onClick=${() => fileRef.current?.click()}
+              className="px-3 py-1 bg-gray-200 text-gray-600 rounded text-xs hover:bg-gray-300" title="Upload Excel file">File</button>
+          </div>
         </div>
+        <input ref=${fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
+          onChange=${e => { handleFile(e.target.files[0]); e.target.value = ''; }} />
       </div>
       <${CategoryReference} expanded=${refExpanded} setExpanded=${setRefExpanded} />
     </div>`;
@@ -642,25 +748,42 @@ function MobileTabBar({ tab, setTab }) {
     </div>`;
 }
 
+// ─── App ─────────────────────────────────────────────────────────────────────
 function App() {
   const [name, setName] = useState('');
-  const [team, setTeam] = useState('');
-  const [classCode, setClassCode] = useState('');
   const [weekDate, setWeekDate] = useState('');
-  const [absence, setAbsence] = useState('');
-  const [grid, setGrid] = useState(initGrid);
-  const [highlights, setHighlights] = useState(new Set());
+  const [classCode, setClassCode] = useState('');
+  const [platformRows, setPlatformRows] = useState([emptyRow()]);
+  const [nonPlatform, setNonPlatform] = useState(emptyNP());
+  const [unitHours, setUnitHours] = useState(emptyUH());
   const [chatKey, setChatKey] = useState(0);
   const [mobileTab, setMobileTab] = useState('form');
 
-  const sunday = useMemo(() => getSundayForWeek(weekDate), [weekDate]);
+  const sunday = useMemo(() => computeSunday(weekDate), [weekDate]);
 
   const handleClear = () => {
     if (!confirm('Clear all form data?')) return;
-    setName(''); setTeam(''); setClassCode(''); setWeekDate(''); setAbsence('');
-    setGrid(initGrid());
-    setHighlights(new Set());
+    setName(''); setWeekDate(''); setClassCode('');
+    setPlatformRows([emptyRow()]);
+    setNonPlatform(emptyNP());
+    setUnitHours(emptyUH());
     setChatKey(k => k + 1);
+  };
+
+  const handleExport = async () => {
+    try {
+      await exportPDF({
+        name,
+        sundayFormatted: formatDate(sunday),
+        sundayISO: sunday,
+        platformRows,
+        nonPlatform,
+        unitHours,
+      });
+    } catch (err) {
+      alert('PDF export failed: ' + err.message);
+      console.error('PDF export error:', err);
+    }
   };
 
   return html`
@@ -668,17 +791,19 @@ function App() {
       <${MobileTabBar} tab=${mobileTab} setTab=${setMobileTab} />
       <div className="flex flex-col lg:flex-row min-h-screen">
         <div className=${`flex-1 lg:max-w-[65%] p-0 ${mobileTab !== 'form' ? 'hidden lg:block' : ''}`}>
-          <${Header} name=${name} setName=${setName} team=${team} setTeam=${setTeam}
-            classCode=${classCode} setClassCode=${setClassCode} weekDate=${weekDate} setWeekDate=${setWeekDate}
-            sunday=${sunday} onClear=${handleClear} />
+          <${Header} name=${name} setName=${setName} weekDate=${weekDate} setWeekDate=${setWeekDate}
+            sunday=${sunday} onClear=${handleClear} onExport=${handleExport} />
           <div className="p-4">
-            ${SECTIONS.map(s => html`<${SectionGrid} key=${s.id} section=${s} grid=${grid} setGrid=${setGrid} highlights=${highlights} />`)}
-            <${Summary} grid=${grid} />
-            <${AbsenceAndSignatures} absence=${absence} setAbsence=${setAbsence} />
+            <${PlatformTCH} rows=${platformRows} setRows=${setPlatformRows} classCode=${classCode} setClassCode=${setClassCode} />
+            <${NonPlatformSection} data=${nonPlatform} setData=${setNonPlatform} />
+            <${UnitHoursSection} data=${unitHours} setData=${setUnitHours} />
+            <${Summary} platformRows=${platformRows} nonPlatform=${nonPlatform} unitHours=${unitHours} />
           </div>
         </div>
         <div className=${`lg:w-[35%] border-l border-gray-200 bg-white flex flex-col h-[calc(100vh-41px)] lg:h-screen lg:sticky lg:top-0 no-print ${mobileTab !== 'chat' ? 'hidden lg:flex' : ''}`}>
-          <${ChatSidebar} key=${chatKey} grid=${grid} setGrid=${setGrid} onClear=${chatKey} />
+          <${ChatSidebar} platformRows=${platformRows} setPlatformRows=${setPlatformRows}
+            nonPlatform=${nonPlatform} setNonPlatform=${setNonPlatform}
+            unitHours=${unitHours} setUnitHours=${setUnitHours} resetKey=${chatKey} />
         </div>
       </div>
     </${AuthProvider}>`;
