@@ -181,7 +181,31 @@ If clarification needed:
   "clarification_needed": true,
   "question": "Were you teaching content or discussing performance?"
 }
-\`\`\``;
+\`\`\`
+
+## Batch Mode (CMLI use case)
+When the user asks to process hours for MULTIPLE people from a spreadsheet (e.g., "generate forms for all team members", "I am the CMLI, make forms for everyone"), return a batch response:
+\`\`\`json
+{
+  "batch": true,
+  "sundayDate": "2 Mar 2026",
+  "members": [
+    {
+      "name": "Morgan, Jesse SSgt",
+      "platformRows": [{ "teamDsg": "A3", "fullSect": 15 }],
+      "nonPlatform": { "classPrep": 2 },
+      "unitHours": { "unitDuties": 1 }
+    },
+    {
+      "name": "Smith, John Sgt",
+      "platformRows": [{ "teamDsg": "B2", "fullSect": 12 }],
+      "nonPlatform": {},
+      "unitHours": {}
+    }
+  ]
+}
+\`\`\`
+Include every person found in the data. Each member gets their own complete form data. If the user identifies themselves ("I am SSgt Morgan"), process only that person in normal (non-batch) mode. Batch mode is for when a supervisor wants ALL forms at once.`;
 
 // ─── Firebase Init ───────────────────────────────────────────────────────────
 let firebaseAuth = null;
@@ -234,12 +258,18 @@ function parseExcelToText(data) {
 }
 
 // ─── PDF Export ──────────────────────────────────────────────────────────────
-async function exportPDF(formData) {
-  const { PDFDocument } = await import('https://esm.sh/pdf-lib@1.17.1');
-  const templateBytes = await fetch(new URL('template.pdf', window.location.href).href).then(r => r.arrayBuffer());
-  const pdf = await PDFDocument.load(templateBytes);
-  const form = pdf.getForm();
+let _pdfLib = null;
+let _templateBytes = null;
+async function getPdfLib() {
+  if (!_pdfLib) _pdfLib = await import('https://esm.sh/pdf-lib@1.17.1');
+  return _pdfLib;
+}
+async function getTemplate() {
+  if (!_templateBytes) _templateBytes = await fetch(new URL('template.pdf', window.location.href).href).then(r => r.arrayBuffer());
+  return _templateBytes;
+}
 
+function fillPDF(form, formData) {
   const set = (name, val) => {
     try {
       const f = form.getTextField(name);
@@ -248,10 +278,10 @@ async function exportPDF(formData) {
   };
 
   set('Name', formData.name);
-  set('Sunday Date', formData.sundayFormatted);
+  set('Sunday Date', formData.sundayFormatted || '');
 
-  // Platform TCH rows
-  formData.platformRows.forEach((row, i) => {
+  const rows = formData.platformRows || [];
+  rows.forEach((row, i) => {
     const n = i + 1;
     if (!row.teamDsg) return;
     set(n === 1 ? 'Team Dsg 1' : `Team Dsg${n}`, row.teamDsg);
@@ -263,30 +293,36 @@ async function exportPDF(formData) {
     set(`Total TCHRow${n}`, rowTotal(row));
   });
 
-  const pTotal = formData.platformRows.reduce((s, r) => s + rowTotal(r), 0);
+  const pTotal = rows.reduce((s, r) => s + rowTotal(r), 0);
   set('Total TCHRow11', pTotal);
 
-  // Non-Platform
   const npMap = {
     classPrep: 'Class Prep', matlsDev: 'Matls Development', matlsReview: 'Matls Review',
     acadAdvise: 'Acad Advise', discCounsel: 'Disc Counsel', mliInstMentor: 'MLI Inst Mentor',
     classObserve: 'Class Observe', testProctor: 'Test Proctor', ocEventAdmin: 'OC Event Admin Spt',
   };
-  Object.entries(npMap).forEach(([k, field]) => set(field, formData.nonPlatform[k] || ''));
-  const npTotal = sumObj(formData.nonPlatform);
+  const np = formData.nonPlatform || {};
+  Object.entries(npMap).forEach(([k, field]) => set(field, np[k] || ''));
+  const npTotal = sumObj(np);
   set('NonPlatform Total', npTotal);
 
-  // Unit Hours
   const uhMap = { unitDuties: 'Unit Duties', langMentor: 'Lang Mentor', proDevPme: 'Pro Dev PME', postComm: 'Post Events', absence: 'Absence' };
-  Object.entries(uhMap).forEach(([k, field]) => set(field, formData.unitHours[k] || ''));
-  const uhTotal = sumObj(formData.unitHours);
+  const uh = formData.unitHours || {};
+  Object.entries(uhMap).forEach(([k, field]) => set(field, uh[k] || ''));
+  const uhTotal = sumObj(uh);
   set('Total Unit Hrs', uhTotal);
 
-  // Summary
   set('Total Platform TCH', pTotal);
   set('Total NonPlatform Hou', npTotal);
   set('Total Unit Hours', uhTotal);
   set('Total Weekly Hours', pTotal + npTotal + uhTotal);
+}
+
+async function exportPDF(formData) {
+  const { PDFDocument } = await getPdfLib();
+  const template = await getTemplate();
+  const pdf = await PDFDocument.load(template.slice(0));
+  fillPDF(pdf.getForm(), formData);
 
   const pdfBytes = await pdf.save();
   const blob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -294,6 +330,29 @@ async function exportPDF(formData) {
   const a = document.createElement('a');
   a.href = url;
   a.download = `MLI_Weekly_Hours_${formData.sundayISO || 'blank'}.pdf`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function batchExportPDFs(members, sundayDate) {
+  const { PDFDocument } = await getPdfLib();
+  const template = await getTemplate();
+  const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
+
+  const zip = new JSZip();
+  for (const member of members) {
+    const pdf = await PDFDocument.load(template.slice(0));
+    fillPDF(pdf.getForm(), { ...member, sundayFormatted: sundayDate || '' });
+    const pdfBytes = await pdf.save();
+    const safeName = (member.name || 'Unknown').replace(/[^a-zA-Z0-9_ -]/g, '').replace(/\s+/g, '_');
+    zip.file(`MLI_Hours_${safeName}.pdf`, pdfBytes);
+  }
+
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(zipBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `MLI_Weekly_Hours_Batch.zip`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -494,12 +553,24 @@ function Summary({ platformRows, nonPlatform, unitHours }) {
 }
 
 // ─── Chat Components ─────────────────────────────────────────────────────────
-function ChatMessage({ msg }) {
+function ChatMessage({ msg, onBatchDownload, batchLoading }) {
   const isUser = msg.role === 'user';
   return html`
     <div className=${`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
       <div className=${`max-w-[85%] rounded-lg px-3 py-2 text-sm ${isUser ? 'bg-mil-700 text-white' : 'bg-gray-100 text-gray-800'}`}>
         <div className="whitespace-pre-wrap">${msg.display || msg.content}</div>
+        ${msg.batchData && html`
+          <div className="mt-2 border-t border-gray-200 pt-2">
+            <div className="text-xs font-semibold mb-1">${msg.batchData.members.length} team members found:</div>
+            ${msg.batchData.members.map((m, i) => html`
+              <div key=${i} className="text-xs text-gray-600 py-0.5">${m.name}</div>
+            `)}
+            <button onClick=${() => onBatchDownload(msg.batchData)} disabled=${batchLoading}
+              className="mt-2 px-3 py-1.5 bg-yellow-600 text-white rounded text-xs font-semibold hover:bg-yellow-700 disabled:opacity-50 w-full">
+              ${batchLoading ? 'Generating PDFs...' : `Download All ${msg.batchData.members.length} PDFs (ZIP)`}
+            </button>
+          </div>
+        `}
         ${msg.pending && html`
           <div className="mt-2 flex gap-2">
             <button onClick=${msg.onAccept} className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700">Accept</button>
@@ -574,9 +645,11 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
   const [loading, setLoading] = useState(false);
   const [refExpanded, setRefExpanded] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [batchLoading, setBatchLoading] = useState(false);
   const chatRef = useRef(null);
   const chatEndRef = useRef(null);
   const fileRef = useRef(null);
+  const dragCounter = useRef(0);
 
   useEffect(() => {
     chatRef.current = (aiModel && user) ? aiModel.startChat() : null;
@@ -624,9 +697,25 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
     }
   }, [setPlatformRows, setNonPlatform, setUnitHours]);
 
+  const handleBatchDownload = async (batchData) => {
+    setBatchLoading(true);
+    try {
+      await batchExportPDFs(batchData.members, batchData.sundayDate);
+    } catch (err) {
+      alert('Batch export failed: ' + err.message);
+    } finally { setBatchLoading(false); }
+  };
+
   const processResponse = (aiText, newMessages) => {
     const parsed = parseAIResponse(aiText);
     const display = aiText.replace(/```json[\s\S]*?```/g, '').trim();
+
+    // Batch mode
+    if (parsed?.batch && parsed.members?.length) {
+      setMessages([...newMessages, { role: 'assistant', display, batchData: parsed }]);
+      return;
+    }
+
     const hasData = parsed && !parsed.clarification_needed &&
       (parsed.platformRows?.length || Object.keys(parsed.nonPlatform||{}).length || Object.keys(parsed.unitHours||{}).length);
 
@@ -690,12 +779,15 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
     }
   };
 
-  const handleDrop = (e) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); };
+  const handleDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current++; setDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current--; if (dragCounter.current === 0) setDragging(false); };
+  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); };
+  const handleDrop = (e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current = 0; setDragging(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); };
   const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 
   return html`
     <div className="flex flex-col h-full no-print"
-      onDrop=${handleDrop} onDragOver=${e => { e.preventDefault(); setDragging(true); }} onDragLeave=${() => setDragging(false)}>
+      onDragEnter=${handleDragEnter} onDragLeave=${handleDragLeave} onDragOver=${handleDragOver} onDrop=${handleDrop}>
       <div className="px-3 py-2 bg-mil-700 text-white text-sm font-semibold">AI Assistant</div>
       <${AuthPanel} />
       <div className=${`flex-1 overflow-y-auto p-3 space-y-1 relative ${dragging ? 'bg-blue-50' : ''}`}>
@@ -711,7 +803,7 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
             <p className="text-xs text-gray-300">Or drop/upload an Excel file with your hours.</p>
           </div>
         `}
-        ${messages.map((m, i) => html`<${ChatMessage} key=${i} msg=${m} />`)}
+        ${messages.map((m, i) => html`<${ChatMessage} key=${i} msg=${m} onBatchDownload=${handleBatchDownload} batchLoading=${batchLoading} />`)}
         ${loading && html`<div className="flex justify-start mb-3"><div className="bg-gray-100 rounded-lg px-3 py-2 text-sm text-gray-400">Thinking...</div></div>`}
         <div ref=${chatEndRef} />
       </div>
