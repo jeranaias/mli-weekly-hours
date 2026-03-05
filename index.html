@@ -910,11 +910,11 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
   const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 
   return html`
-    <div className="flex flex-col h-full no-print"
+    <div className="flex flex-col h-full overflow-hidden no-print"
       onDragEnter=${handleDragEnter} onDragLeave=${handleDragLeave} onDragOver=${handleDragOver} onDrop=${handleDrop}>
-      <div className="px-3 py-2 bg-mil-700 text-white text-sm font-semibold">AI Assistant</div>
+      <div className="px-3 py-2 bg-mil-700 text-white text-sm font-semibold shrink-0">AI Assistant</div>
       <${AuthPanel} />
-      <div className=${`flex-1 overflow-y-auto p-3 space-y-1 relative ${dragging ? 'bg-blue-50' : ''}`}>
+      <div className=${`flex-1 min-h-0 overflow-y-auto p-3 space-y-1 relative ${dragging ? 'bg-blue-50' : ''}`}>
         ${dragging && html`
           <div className="absolute inset-0 flex items-center justify-center bg-blue-50/90 border-2 border-dashed border-blue-400 rounded z-10">
             <div className="text-blue-600 font-semibold text-sm">Drop Excel file here</div>
@@ -933,7 +933,7 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
         ${loading && html`<div className="flex justify-start mb-3"><div className="bg-gray-100 rounded-lg px-3 py-2 text-sm text-gray-400">Thinking...</div></div>`}
         <div ref=${chatEndRef} />
       </div>
-      <div className="p-3 border-t">
+      <div className="p-3 border-t shrink-0">
         <div className="flex gap-2">
           <textarea value=${input} onChange=${e => setInput(e.target.value)} onKeyDown=${handleKeyDown}
             placeholder=${user ? "Describe your hours or drop Excel..." : "Sign in to use AI..."}
@@ -952,7 +952,9 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
         <input ref=${fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
           onChange=${e => { handleFile(e.target.files[0]); e.target.value = ''; }} />
       </div>
-      <${CategoryReference} expanded=${refExpanded} setExpanded=${setRefExpanded} />
+      <div className="shrink-0">
+        <${CategoryReference} expanded=${refExpanded} setExpanded=${setRefExpanded} />
+      </div>
     </div>`;
 }
 
