@@ -628,6 +628,20 @@ function ChatSidebar({ grid, setGrid, onClear: resetChat }) {
     </div>`;
 }
 
+function MobileTabBar({ tab, setTab }) {
+  return html`
+    <div className="lg:hidden sticky top-0 z-50 flex border-b border-gray-300 bg-white no-print">
+      <button onClick=${() => setTab('form')}
+        className=${`flex-1 py-2.5 text-sm font-semibold text-center ${tab === 'form' ? 'text-mil-700 border-b-2 border-mil-700 bg-gray-50' : 'text-gray-400'}`}>
+        Form
+      </button>
+      <button onClick=${() => setTab('chat')}
+        className=${`flex-1 py-2.5 text-sm font-semibold text-center ${tab === 'chat' ? 'text-mil-700 border-b-2 border-mil-700 bg-gray-50' : 'text-gray-400'}`}>
+        AI Chat
+      </button>
+    </div>`;
+}
+
 function App() {
   const [name, setName] = useState('');
   const [team, setTeam] = useState('');
@@ -637,6 +651,7 @@ function App() {
   const [grid, setGrid] = useState(initGrid);
   const [highlights, setHighlights] = useState(new Set());
   const [chatKey, setChatKey] = useState(0);
+  const [mobileTab, setMobileTab] = useState('form');
 
   const sunday = useMemo(() => getSundayForWeek(weekDate), [weekDate]);
 
@@ -650,8 +665,9 @@ function App() {
 
   return html`
     <${AuthProvider}>
+      <${MobileTabBar} tab=${mobileTab} setTab=${setMobileTab} />
       <div className="flex flex-col lg:flex-row min-h-screen">
-        <div className="flex-1 lg:max-w-[65%] p-0">
+        <div className=${`flex-1 lg:max-w-[65%] p-0 ${mobileTab !== 'form' ? 'hidden lg:block' : ''}`}>
           <${Header} name=${name} setName=${setName} team=${team} setTeam=${setTeam}
             classCode=${classCode} setClassCode=${setClassCode} weekDate=${weekDate} setWeekDate=${setWeekDate}
             sunday=${sunday} onClear=${handleClear} />
@@ -661,7 +677,7 @@ function App() {
             <${AbsenceAndSignatures} absence=${absence} setAbsence=${setAbsence} />
           </div>
         </div>
-        <div className="lg:w-[35%] border-l border-gray-200 bg-white flex flex-col h-screen lg:sticky lg:top-0 no-print">
+        <div className=${`lg:w-[35%] border-l border-gray-200 bg-white flex flex-col h-[calc(100vh-41px)] lg:h-screen lg:sticky lg:top-0 no-print ${mobileTab !== 'chat' ? 'hidden lg:flex' : ''}`}>
           <${ChatSidebar} key=${chatKey} grid=${grid} setGrid=${setGrid} onClear=${chatKey} />
         </div>
       </div>
