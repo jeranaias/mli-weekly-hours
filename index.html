@@ -892,6 +892,11 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
         return;
       }
       nameMapRef.current = { tokenMap: { ...nameMapRef.current.tokenMap, ...result.tokenMap }, nameToToken: { ...nameMapRef.current.nameToToken, ...result.nameToToken } };
+      // Show name mapping legend so user can identify themselves
+      if (Object.keys(result.tokenMap).length) {
+        const legend = Object.entries(result.tokenMap).map(([tok, name]) => `${tok} = ${name}`).join('\n');
+        setMessages(prev => [...prev, { role: 'assistant', display: `Names anonymized for privacy:\n${legend}\n\nFind your token above, then tell me which one you are — or use Batch to generate all forms.` }]);
+      }
       const isBatch = batchModeRef.current;
       batchModeRef.current = false;
       const prompt = isBatch
