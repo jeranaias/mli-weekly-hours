@@ -522,9 +522,14 @@ function PlatformTCH({ rows, setRows, classCode, setClassCode }) {
     setClassCode(code);
     if (!code || !CLASS_CODES[code]) return;
     const teams = CLASS_CODES[code];
-    const newRows = teams.map(t => ({ ...emptyRow(), teamDsg: t }));
-    while (newRows.length < 1) newRows.push(emptyRow());
-    setRows(newRows);
+    // Additive: merge new teams into existing rows instead of replacing
+    setRows(prev => {
+      const next = prev.filter(r => r.teamDsg); // keep existing teams
+      for (const t of teams) {
+        if (!next.find(r => r.teamDsg === t)) next.push({ ...emptyRow(), teamDsg: t });
+      }
+      return next.length ? next : [emptyRow()];
+    });
   };
 
   return html`
