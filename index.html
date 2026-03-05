@@ -222,7 +222,7 @@ if (IS_CONFIGURED) {
   aiModel = getGenerativeModel(ai, {
     model: 'gemini-2.5-flash',
     systemInstruction: SYSTEM_PROMPT,
-    generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+    generationConfig: { temperature: 0.3, maxOutputTokens: 16384 },
   });
 }
 
@@ -246,9 +246,24 @@ function rowTotal(r) { return (r.fullSect||0) + (r.splitSect||0) + (r.specAsst||
 function sumObj(o) { return Object.values(o).reduce((s, v) => s + (v||0), 0); }
 
 function parseAIResponse(text) {
+  // Try complete fenced JSON first
   const match = text.match(/```json\s*([\s\S]*?)```/);
-  if (!match) return null;
-  try { return JSON.parse(match[1]); } catch { return null; }
+  if (match) {
+    try { return JSON.parse(match[1]); } catch {}
+  }
+  // Fallback: find JSON start after ```json (may be truncated / missing closing fence)
+  const start = text.indexOf('```json');
+  if (start >= 0) {
+    let json = text.slice(start + 7).replace(/```\s*$/, '').trim();
+    try { return JSON.parse(json); } catch {}
+  }
+  // Last resort: find first { to last }
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first >= 0 && last > first) {
+    try { return JSON.parse(text.slice(first, last + 1)); } catch {}
+  }
+  return null;
 }
 
 function lastName(full) {
@@ -817,7 +832,14 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
   const processResponse = (aiText, newMessages) => {
     const parsed = parseAIResponse(aiText);
     const nt = nameMapRef.current.nameToToken;
-    const display = detokenize(aiText.replace(/```json[\s\S]*?```/g, '').trim(), nt);
+    // Strip JSON blocks (complete or truncated) before detokenizing display text
+    let stripped = aiText.replace(/```json[\s\S]*?```/g, '').trim();
+    if (stripped === aiText.trim()) {
+      // Closing fence missing (truncated) — strip from ```json onward
+      const idx = stripped.indexOf('```json');
+      if (idx >= 0) stripped = stripped.slice(0, idx).trim();
+    }
+    const display = detokenize(stripped, nt);
 
     // Batch mode — detokenize member names for display
     if (parsed?.batch && parsed.members?.length) {
