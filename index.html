@@ -871,6 +871,8 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
     } finally { setLoading(false); }
   };
 
+  const batchModeRef = useRef(false);
+
   const handleFile = async (file) => {
     if (!file) return;
     const ext = file.name.split('.').pop().toLowerCase();
@@ -890,7 +892,12 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
         return;
       }
       nameMapRef.current = { tokenMap: { ...nameMapRef.current.tokenMap, ...result.tokenMap }, nameToToken: { ...nameMapRef.current.nameToToken, ...result.nameToToken } };
-      sendMessage(`Here is a spreadsheet of my hours (names anonymized as MLI_1, MLI_2, etc.). Please classify each entry:\n\n${result.text}`);
+      const isBatch = batchModeRef.current;
+      batchModeRef.current = false;
+      const prompt = isBatch
+        ? `Here is a spreadsheet of hours for multiple MLIs (names anonymized as MLI_1, MLI_2, etc.). Generate batch forms for ALL team members — one PDF per person. Use batch mode.\n\n${result.text}`
+        : `Here is a spreadsheet of my hours (names anonymized as MLI_1, MLI_2, etc.). Please classify each entry:\n\n${result.text}`;
+      sendMessage(prompt);
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', display: `Failed to read file: ${err.message}` }]);
     }
@@ -918,6 +925,7 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
             <p className="mb-2">Tell me about your week and I'll fill the form.</p>
             <p className="text-xs text-gray-300 mb-3">Example: "I taught A3 full section 15 hours, did 2 hours class prep, and 1 hour PERSTAT."</p>
             <p className="text-xs text-gray-300">Or drop/upload an Excel file with your hours.</p>
+            <p className="text-xs text-gray-300 mt-1">Use <strong className="text-gray-400">Batch</strong> to generate PDFs for all MLIs at once (ZIP).</p>
             <p className="text-xs text-gray-300 mt-2">Names are automatically anonymized before reaching the AI.</p>
           </div>
         `}
@@ -933,8 +941,12 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
           <div className="flex flex-col gap-1 self-end">
             <button onClick=${() => sendMessage()} disabled=${loading || !input.trim()}
               className="px-3 py-1 bg-mil-600 text-white rounded text-sm hover:bg-mil-700 disabled:opacity-50">Send</button>
-            <button onClick=${() => fileRef.current?.click()}
-              className="px-3 py-1 bg-gray-200 text-gray-600 rounded text-xs hover:bg-gray-300" title="Upload Excel file">File</button>
+            <div className="flex gap-1">
+              <button onClick=${() => fileRef.current?.click()}
+                className="px-2 py-1 bg-gray-200 text-gray-600 rounded text-xs hover:bg-gray-300" title="Upload Excel — fill your form">File</button>
+              <button onClick=${() => { batchModeRef.current = true; fileRef.current?.click(); }}
+                className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs hover:bg-yellow-200 font-semibold" title="Upload Excel — generate PDFs for ALL MLIs">Batch</button>
+            </div>
           </div>
         </div>
         <input ref=${fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
