@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLI Weekly Hours — DLIFLC Arabic School</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  @media print {
+    .no-print { display: none !important; }
+    .print-only { display: block !important; }
+    body { font-size: 9pt; }
+    .print-break-avoid { break-inside: avoid; }
+  }
+  .print-only { display: none; }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; }
+</style>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        mil: { 50: '#f0f4f0', 100: '#d9e2d9', 200: '#b3c5b3', 500: '#4a6741', 600: '#3d5636', 700: '#2f432a', 800: '#22301e', 900: '#141e12' }
+      }
+    }
+  }
+}
+</script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ─── Data ───────────────────────────────────────────────────────────────────
+
+const CLASS_CODES = {
+  'AD00125': ['E1','E2'],
+  'AD00326': ['I2','J1'],
+  'AD00426': ['A2','M3','M5'],
+  'AD01225': ['D2'],
+  'AD50125': ['B2','C3','C4'],
+  'AD50126': ['A4','C2','D1','E3'],
+  'AD50225': ['M4'],
+  'AD50325': ['B3','I1'],
+  'AD50425': ['K1'],
+  'AD50525': ['A3','D3','K2'],
+  'AD50825': ['J3','L2','L3'],
+  'AD50925': ['B1','I3'],
+  'AD55225': ['D4'],
+  'AD57025': ['N1','N2'],
+};
+
+const ALL_TEAMS = Object.values(CLASS_CODES).flat().sort();
+const TEAM_TO_CODE = {};
+Object.entries(CLASS_CODES).forEach(([code, teams]) => {
+  teams.forEach(t => { TEAM_TO_CODE[t] = code; });
+});
+
+const DAYS = ['Mon','Tue','Wed','Thu','Fri'];
+
+const SECTIONS = [
+  {
+    id: 'platform',
+    title: 'Platform Teaching Contact Hours (TCH)',
+    shortTitle: 'Platform TCH',
+    categories: [
+      { id: 'fullSect',  label: 'Full Sect' },
+      { id: 'splitSect', label: 'Split Sect' },
+      { id: 'specAsst',  label: 'Spec Asst' },
+      { id: 'supple',    label: 'Supple Hrs' },
+    ]
+  },
+  {
+    id: 'nonPlatform',
+    title: 'Non-Platform Schoolhouse Hours',
+    shortTitle: 'Non-Platform',
+    categories: [
+      { id: 'classPrep',     label: 'Class Prep' },
+      { id: 'matlsDev',      label: 'Matls Dev' },
+      { id: 'matlsReview',   label: 'Matls Review' },
+      { id: 'acadAdvise',    label: 'Acad Advise' },
+      { id: 'discCounsel',   label: 'Disc Counsel' },
+      { id: 'mliInstMentor', label: 'MLI Inst Mentor' },
+      { id: 'classObserve',  label: 'Class Observe' },
+      { id: 'testProctor',   label: 'Test Proctor' },
+      { id: 'ocEventAdmin',  label: 'OC Event Admin Spt' },
+    ]
+  },
+  {
+    id: 'unit',
+    title: 'Unit Hours',
+    shortTitle: 'Unit Hrs',
+    categories: [
+      { id: 'unitDuties',  label: 'Unit Duties' },
+      { id: 'langMentor',  label: 'Lang Mentor' },
+      { id: 'proDevPme',   label: 'Pro Dev PME SLTE' },
+      { id: 'postComm',    label: 'Post/Comm Events' },
+    ]
+  }
+];
+
+const ALL_CATEGORIES = SECTIONS.flatMap(s => s.categories.map(c => ({ ...c, section: s.id })));
+
+const CATEGORY_DEFS = {
+  fullSect: 'Teaching the full section — all assigned students present, not subdivided.',
+  splitSect: 'Teaching a subgroup of a multi-team section split across rooms.',
+  specAsst: 'One-on-one or small group instruction delivering curriculum content.',
+  supple: 'Group instruction beyond core hours 1–3 (fourth hour, supplemental materials).',
+  classPrep: 'Preparing for a specific upcoming lesson you will personally deliver.',
+  matlsDev: 'Creating new instructional materials from scratch.',
+  matlsReview: 'Reviewing, updating, or evaluating existing instructional materials.',
+  acadAdvise: 'Discussing academic performance, EI/SLS sessions — no content delivery.',
+  discCounsel: 'Counseling a student on a behavioral/disciplinary infraction.',
+  mliInstMentor: 'Coaching or mentoring a fellow instructor on pedagogy.',
+  classObserve: 'Formally observing another instructor\'s class with a rubric/evaluation.',
+  testProctor: 'Proctoring a test or leading a post-test critique (default 2 hrs for critiques).',
+  ocEventAdmin: 'Schoolhouse-directed admin: PERSTAT, SIR, 806, EI scheduling, Form 106.',
+  unitDuties: 'Unit/command-directed tasks: formations, MLI sync, collateral duties.',
+  langMentor: 'Language mentoring for non-students or outside the DLI curriculum.',
+  proDevPme: 'Formal PME, SLTE, courses, certifications, workshops.',
+  postComm: 'Command-approved post/community events: Language Day, MWR, volunteer events.',
+};
+
+// ─── System Prompt ──────────────────────────────────────────────────────────
+
+const SYSTEM_PROMPT = `You are an assistant that helps Military Language Instructors (MLIs) at DLIFLC categorize their weekly work hours into the correct form categories.
+
+## Your Job
+Parse the MLI's natural language description of their work week and map each activity to the correct category, day, and hour count. Return structured JSON that the form can consume.
+
+## CRITICAL RULES
+1. When you can confidently classify, DO IT. Do not ask for confirmation on high-confidence classifications.
+2. When genuinely ambiguous, ask exactly ONE clarifying question targeting the single piece of information that resolves it.
+3. Default group instruction to Full Sect unless explicitly stated otherwise.
+4. Test critiques default to 2 hours.
+5. Zero hour (0700) sessions are always Spec Asst.
+6. PERSTAT/SIR/806 is always OC Event Admin Spt, 1 hour.
+7. MLI Sync is always Unit Duties.
+8. SLS/EI sessions are Acad Advise.
+
+## Category IDs and Sections
+Platform TCH: fullSect, splitSect, specAsst, supple
+Non-Platform: classPrep, matlsDev, matlsReview, acadAdvise, discCounsel, mliInstMentor, classObserve, testProctor, ocEventAdmin
+Unit Hours: unitDuties, langMentor, proDevPme, postComm
+
+## Classification Decision Tree
+Q1: Was the MLI teaching or directly supporting instruction with students present?
+- YES:
+  - Full group, core hours → fullSect
+  - Subgroup split from multi-team section → splitSect
+  - Individual student + curriculum content → specAsst
+  - Individual student + discussing performance → acadAdvise
+  - Full group, beyond core hours (4th hour, supplemental) → supple
+- NO, academic/schoolhouse-related:
+  - Preparing for a specific lesson → classPrep
+  - Creating new materials → matlsDev
+  - Reviewing existing materials → matlsReview
+  - EI/SLS/academic standing discussion → acadAdvise
+  - Behavioral counseling → discCounsel
+  - Helping a fellow instructor → mliInstMentor
+  - Formal class observation with rubric → classObserve
+  - Proctoring or critiquing a test → testProctor
+  - Schoolhouse admin (PERSTAT/SIR/806/scheduling/awards) → ocEventAdmin
+- NO, military/unit-directed:
+  - Unit meeting, formation, collateral duty, MLI sync → unitDuties
+  - Language support for non-students → langMentor
+  - Formal PME/SLTE/course → proDevPme
+  - Command-approved post/community event → postComm
+
+## Disambiguation Questions (ask only ONE, only when needed)
+1. "Were you teaching content, or discussing the student's performance?" → specAsst vs acadAdvise
+2. "Was this directed by the schoolhouse or by your unit?" → ocEventAdmin vs unitDuties
+3. "Was this with the full group or an individual student?" → fullSect vs specAsst
+4. "Were you creating new materials or reviewing existing ones?" → matlsDev vs matlsReview
+
+## Hard Boundaries
+- Single-team class codes: all group instruction = fullSect (no splitSect possible)
+- Homework non-completion counseling = discCounsel (behavioral, not academic)
+- Failing a test = acadAdvise (academic, not behavioral)
+- OPI prep with a student = specAsst
+- Teaching test strategies to a group = supple (not testProctor)
+- Informal instructor help (no rubric) = mliInstMentor (not classObserve)
+- Language Day = postComm
+
+## Response Format
+Always respond with a brief conversational message, then include a JSON block. The JSON must be wrapped in \`\`\`json code fences.
+
+If you have entries to propose:
+\`\`\`json
+{
+  "entries": [
+    { "day": "Mon", "category": "fullSect", "section": "platform", "hours": 3, "confidence": "high", "reasoning": "Teaching full section A3" }
+  ],
+  "clarification_needed": false
+}
+\`\`\`
+
+If you need clarification:
+\`\`\`json
+{
+  "entries": [],
+  "clarification_needed": true,
+  "question": "Were you teaching content, or discussing the student's performance?"
+}
+\`\`\`
+
+Valid days: Mon, Tue, Wed, Thu, Fri
+Valid categories: fullSect, splitSect, specAsst, supple, classPrep, matlsDev, matlsReview, acadAdvise, discCounsel, mliInstMentor, classObserve, testProctor, ocEventAdmin, unitDuties, langMentor, proDevPme, postComm
+Valid sections: platform, nonPlatform, unit
+
+Hours should be positive numbers (can be decimals like 0.5 for half hours).
+
+Keep your conversational responses concise and military-professional. Summarize what you mapped and why.`;
+
+// ─── Utilities ──────────────────────────────────────────────────────────────
+
+function getSundayForWeek(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay();
+  d.setDate(d.getDate() - day);
+  return d.toISOString().split('T')[0];
+}
+
+function formatSunday(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function initGrid() {
+  const grid = {};
+  ALL_CATEGORIES.forEach(c => {
+    grid[c.id] = {};
+    DAYS.forEach(d => { grid[c.id][d] = 0; });
+  });
+  return grid;
+}
+
+function parseAIResponse(text) {
+  const match = text.match(/```json\s*([\s\S]*?)```/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch { return null; }
+}
+
+// ─── Components ─────────────────────────────────────────────────────────────
+
+function Header({ name, setName, team, setTeam, classCode, setClassCode, weekDate, setWeekDate, sunday, onClear }) {
+  const handleTeamChange = (val) => {
+    setTeam(val);
+    if (TEAM_TO_CODE[val]) setClassCode(TEAM_TO_CODE[val]);
+  };
+  const handleCodeChange = (val) => {
+    setClassCode(val);
+    if (CLASS_CODES[val] && CLASS_CODES[val].length === 1) setTeam(CLASS_CODES[val][0]);
+    else setTeam('');
+  };
+
+  return (
+    <div className="bg-mil-700 text-white p-4 print:bg-black print:text-black">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <h1 className="text-lg font-bold tracking-wide">DLIFLC — MLI WEEKLY HOURS</h1>
+          <span className="text-mil-200 text-sm">Arabic School</span>
+        </div>
+        <div className="flex gap-2 no-print">
+          <button onClick={onClear} className="px-3 py-1 bg-mil-800 hover:bg-mil-900 rounded text-sm">Clear</button>
+          <button onClick={() => window.print()} className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-sm font-semibold">Export PDF</button>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+        <div>
+          <label className="block text-mil-200 text-xs mb-1">MLI Name</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Last, First RANK"
+            className="w-full bg-mil-800 border border-mil-500 rounded px-2 py-1 text-white placeholder-mil-200 print:bg-white print:text-black print:border-black" />
+        </div>
+        <div>
+          <label className="block text-mil-200 text-xs mb-1">Team Dsg</label>
+          <select value={team} onChange={e => handleTeamChange(e.target.value)}
+            className="w-full bg-mil-800 border border-mil-500 rounded px-2 py-1 text-white print:bg-white print:text-black print:border-black">
+            <option value="">Select...</option>
+            {ALL_TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-mil-200 text-xs mb-1">Class Code</label>
+          <select value={classCode} onChange={e => handleCodeChange(e.target.value)}
+            className="w-full bg-mil-800 border border-mil-500 rounded px-2 py-1 text-white print:bg-white print:text-black print:border-black">
+            <option value="">Select...</option>
+            {Object.keys(CLASS_CODES).sort().map(c => <option key={c} value={c}>{c} ({CLASS_CODES[c].join(', ')})</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-mil-200 text-xs mb-1">Team Code</label>
+          <input value="15026" readOnly className="w-full bg-mil-900 border border-mil-500 rounded px-2 py-1 text-mil-200 print:bg-white print:text-black print:border-black" />
+        </div>
+        <div>
+          <label className="block text-mil-200 text-xs mb-1">Week Of (Sunday: {sunday ? formatSunday(sunday) : '—'})</label>
+          <input type="date" value={weekDate} onChange={e => setWeekDate(e.target.value)}
+            className="w-full bg-mil-800 border border-mil-500 rounded px-2 py-1 text-white print:bg-white print:text-black print:border-black" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HourCell({ value, onChange, highlight }) {
+  return (
+    <input
+      type="number"
+      min="0"
+      max="24"
+      step="0.5"
+      value={value || ''}
+      onChange={e => onChange(parseFloat(e.target.value) || 0)}
+      className={`w-14 h-8 text-center text-sm border rounded focus:outline-none focus:ring-2 focus:ring-mil-500
+        ${highlight ? 'bg-yellow-100 border-yellow-400' : 'border-gray-300 bg-white'}
+        print:border-black print:bg-white`}
+    />
+  );
+}
+
+function SectionGrid({ section, grid, setGrid, highlights }) {
+  const rowTotal = (catId) => DAYS.reduce((s, d) => s + (grid[catId]?.[d] || 0), 0);
+  const colTotal = (day) => section.categories.reduce((s, c) => s + (grid[c.id]?.[day] || 0), 0);
+  const sectionTotal = section.categories.reduce((s, c) => s + rowTotal(c.id), 0);
+
+  const updateCell = (catId, day, val) => {
+    setGrid(prev => ({
+      ...prev,
+      [catId]: { ...prev[catId], [day]: val }
+    }));
+  };
+
+  const sectionColors = {
+    platform: 'border-green-600 bg-green-50',
+    nonPlatform: 'border-blue-600 bg-blue-50',
+    unit: 'border-amber-600 bg-amber-50',
+  };
+
+  return (
+    <div className={`border-l-4 ${sectionColors[section.id]} rounded-r mb-4 print-break-avoid`}>
+      <div className="px-3 py-2 font-semibold text-sm border-b border-gray-200">{section.title}</div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-gray-500">
+              <th className="text-left pl-3 py-1 w-36">Category</th>
+              {DAYS.map(d => <th key={d} className="py-1 w-14 text-center">{d}</th>)}
+              <th className="py-1 w-14 text-center font-bold">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {section.categories.map(cat => (
+              <tr key={cat.id} className="border-t border-gray-100 hover:bg-white/50">
+                <td className="pl-3 py-1 text-xs font-medium text-gray-700" title={CATEGORY_DEFS[cat.id]}>{cat.label}</td>
+                {DAYS.map(d => (
+                  <td key={d} className="py-1 text-center">
+                    <HourCell
+                      value={grid[cat.id]?.[d]}
+                      onChange={v => updateCell(cat.id, d, v)}
+                      highlight={highlights?.has(`${cat.id}-${d}`)}
+                    />
+                  </td>
+                ))}
+                <td className="py-1 text-center font-semibold text-sm">{rowTotal(cat.id) || ''}</td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-gray-300 bg-gray-50 font-semibold">
+              <td className="pl-3 py-1 text-xs">{section.shortTitle} Total</td>
+              {DAYS.map(d => <td key={d} className="py-1 text-center text-sm">{colTotal(d) || ''}</td>)}
+              <td className="py-1 text-center text-sm font-bold">{sectionTotal || ''}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function Summary({ grid }) {
+  const sectionTotal = (sectionId) => {
+    const sec = SECTIONS.find(s => s.id === sectionId);
+    return sec.categories.reduce((s, c) => s + DAYS.reduce((ds, d) => ds + (grid[c.id]?.[d] || 0), 0), 0);
+  };
+  const platform = sectionTotal('platform');
+  const nonPlatform = sectionTotal('nonPlatform');
+  const unit = sectionTotal('unit');
+  const total = platform + nonPlatform + unit;
+
+  return (
+    <div className="bg-gray-100 border rounded p-3 mb-4 print-break-avoid">
+      <div className="grid grid-cols-4 gap-4 text-center text-sm">
+        <div><div className="text-xs text-gray-500">Platform TCH</div><div className="font-bold text-lg text-green-700">{platform || '—'}</div></div>
+        <div><div className="text-xs text-gray-500">Non-Platform</div><div className="font-bold text-lg text-blue-700">{nonPlatform || '—'}</div></div>
+        <div><div className="text-xs text-gray-500">Unit Hours</div><div className="font-bold text-lg text-amber-700">{unit || '—'}</div></div>
+        <div><div className="text-xs text-gray-500">Weekly Total</div><div className="font-bold text-xl">{total || '—'}</div></div>
+      </div>
+    </div>
+  );
+}
+
+function AbsenceAndSignatures({ absence, setAbsence }) {
+  return (
+    <div className="border rounded p-3 mb-4 text-sm print-break-avoid">
+      <div className="mb-3">
+        <label className="block text-xs text-gray-500 mb-1">Absence (explain any missed hours)</label>
+        <input value={absence} onChange={e => setAbsence(e.target.value)} placeholder="N/A"
+          className="w-full border border-gray-300 rounded px-2 py-1 print:border-black" />
+      </div>
+      <div className="grid grid-cols-2 gap-6 mt-4 print-only">
+        <div>
+          <div className="border-b border-black mb-1 h-8"></div>
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>MLI Signature</span><span>Date</span>
+          </div>
+        </div>
+        <div>
+          <div className="border-b border-black mb-1 h-8"></div>
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>CMLI/ACMLI Signature</span><span>Date</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChatMessage({ msg }) {
+  const isUser = msg.role === 'user';
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
+      <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${isUser ? 'bg-mil-700 text-white' : 'bg-gray-100 text-gray-800'}`}>
+        <div className="whitespace-pre-wrap">{msg.display || msg.content}</div>
+        {msg.entries && msg.entries.length > 0 && (
+          <div className="mt-2 border-t border-gray-200 pt-2">
+            {msg.entries.map((e, i) => (
+              <div key={i} className={`text-xs py-0.5 ${e.confidence === 'high' ? 'text-green-700' : e.confidence === 'medium' ? 'text-yellow-700' : 'text-red-700'}`}>
+                {e.day} → {ALL_CATEGORIES.find(c => c.id === e.category)?.label || e.category}: {e.hours}h
+                {e.confidence !== 'high' && ` (${e.confidence})`}
+              </div>
+            ))}
+          </div>
+        )}
+        {msg.pending && (
+          <div className="mt-2 flex gap-2">
+            <button onClick={() => msg.onAccept()} className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700">Accept</button>
+            <button onClick={() => msg.onReject()} className="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700">Reject</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CategoryReference({ expanded, setExpanded }) {
+  return (
+    <div className="border-t border-gray-200 no-print">
+      <button onClick={() => setExpanded(!expanded)} className="w-full text-left px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-50 flex justify-between items-center">
+        Category Reference {expanded ? '▲' : '▼'}
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 max-h-60 overflow-y-auto">
+          {SECTIONS.map(s => (
+            <div key={s.id} className="mb-2">
+              <div className="text-xs font-bold text-gray-600 mb-1">{s.shortTitle}</div>
+              {s.categories.map(c => (
+                <div key={c.id} className="text-xs text-gray-500 mb-0.5">
+                  <span className="font-medium text-gray-700">{c.label}:</span> {CATEGORY_DEFS[c.id]}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChatSidebar({ grid, setGrid }) {
+  const [apiKey, setApiKey] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [refExpanded, setRefExpanded] = useState(false);
+  const [showKeyInput, setShowKeyInput] = useState(true);
+  const [pendingEntries, setPendingEntries] = useState(null);
+  const chatEndRef = useRef(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
+
+  const applyEntries = useCallback((entries) => {
+    setGrid(prev => {
+      const next = { ...prev };
+      entries.forEach(e => {
+        if (next[e.category] && DAYS.includes(e.day)) {
+          next[e.category] = { ...next[e.category], [e.day]: (next[e.category][e.day] || 0) + e.hours };
+        }
+      });
+      return next;
+    });
+  }, [setGrid]);
+
+  const sendMessage = async () => {
+    if (!input.trim()) return;
+    const userMsg = { role: 'user', content: input.trim() };
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
+    setInput('');
+
+    if (!apiKey) {
+      setMessages([...newMessages, {
+        role: 'assistant',
+        content: 'No API key set. Enter your Anthropic API key above to enable AI classification, or use the form manually with the Category Reference below.',
+        display: 'No API key set. Enter your Anthropic API key above to enable AI classification, or use the form manually with the Category Reference below.'
+      }]);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const apiMessages = newMessages.map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-5-20250514',
+          max_tokens: 1024,
+          system: SYSTEM_PROMPT,
+          messages: apiMessages,
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error?.message || `API error ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      const aiText = data.content?.[0]?.text || 'No response.';
+      const parsed = parseAIResponse(aiText);
+
+      // Strip JSON block from display text
+      const displayText = aiText.replace(/```json[\s\S]*?```/g, '').trim();
+
+      if (parsed && parsed.entries && parsed.entries.length > 0) {
+        const hasLowConfidence = parsed.entries.some(e => e.confidence !== 'high');
+        if (hasLowConfidence) {
+          // Show with accept/reject
+          const msgObj = {
+            role: 'assistant',
+            content: aiText,
+            display: displayText,
+            entries: parsed.entries,
+            pending: true,
+            onAccept: () => {
+              applyEntries(parsed.entries);
+              setMessages(prev => prev.map(m => m === msgObj ? { ...m, pending: false, display: m.display + '\n\n✓ Applied to form.' } : m));
+            },
+            onReject: () => {
+              setMessages(prev => prev.map(m => m === msgObj ? { ...m, pending: false, display: m.display + '\n\n✗ Rejected.' } : m));
+            },
+          };
+          setMessages([...newMessages, msgObj]);
+        } else {
+          // Auto-apply high confidence
+          applyEntries(parsed.entries);
+          setMessages([...newMessages, {
+            role: 'assistant',
+            content: aiText,
+            display: displayText + '\n\n✓ Applied to form.',
+            entries: parsed.entries,
+          }]);
+        }
+      } else {
+        setMessages([...newMessages, {
+          role: 'assistant',
+          content: aiText,
+          display: displayText,
+        }]);
+      }
+    } catch (err) {
+      setMessages([...newMessages, {
+        role: 'assistant',
+        content: `Error: ${err.message}`,
+        display: `Error: ${err.message}`,
+      }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full no-print">
+      <div className="px-3 py-2 bg-mil-700 text-white text-sm font-semibold">AI Assistant</div>
+
+      {/* API Key */}
+      <div className="px-3 py-2 bg-gray-50 border-b">
+        {showKeyInput ? (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Anthropic API Key (not stored)</label>
+            <div className="flex gap-1">
+              <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-..."
+                className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs" />
+              <button onClick={() => { if(apiKey) setShowKeyInput(false); }} className="px-2 py-1 bg-mil-600 text-white rounded text-xs hover:bg-mil-700">Set</button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-green-600 font-medium">API key set ✓</span>
+            <button onClick={() => setShowKeyInput(true)} className="text-gray-400 hover:text-gray-600">Change</button>
+          </div>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-1">
+        {messages.length === 0 && (
+          <div className="text-center text-gray-400 text-sm mt-8">
+            <p className="mb-2">Tell me about your week and I'll fill the form.</p>
+            <p className="text-xs text-gray-300">Example: "Monday I taught A3 full section hours 1-3, then did PERSTAT Tuesday."</p>
+          </div>
+        )}
+        {messages.map((m, i) => <ChatMessage key={i} msg={m} />)}
+        {loading && (
+          <div className="flex justify-start mb-3">
+            <div className="bg-gray-100 rounded-lg px-3 py-2 text-sm text-gray-400">Thinking...</div>
+          </div>
+        )}
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* Input */}
+      <div className="p-3 border-t">
+        <div className="flex gap-2">
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Describe your hours..."
+            rows={2}
+            className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-mil-500"
+          />
+          <button onClick={sendMessage} disabled={loading || !input.trim()}
+            className="px-3 py-1 bg-mil-600 text-white rounded text-sm hover:bg-mil-700 disabled:opacity-50 self-end">
+            Send
+          </button>
+        </div>
+      </div>
+
+      <CategoryReference expanded={refExpanded} setExpanded={setRefExpanded} />
+    </div>
+  );
+}
+
+function App() {
+  const [name, setName] = useState('');
+  const [team, setTeam] = useState('');
+  const [classCode, setClassCode] = useState('');
+  const [weekDate, setWeekDate] = useState('');
+  const [absence, setAbsence] = useState('');
+  const [grid, setGrid] = useState(initGrid);
+  const [highlights, setHighlights] = useState(new Set());
+
+  const sunday = useMemo(() => getSundayForWeek(weekDate), [weekDate]);
+
+  const handleClear = () => {
+    if (!confirm('Clear all form data?')) return;
+    setName(''); setTeam(''); setClassCode(''); setWeekDate(''); setAbsence('');
+    setGrid(initGrid());
+    setHighlights(new Set());
+  };
+
+  return (
+    <div className="flex flex-col lg:flex-row min-h-screen">
+      {/* Form side */}
+      <div className="flex-1 lg:max-w-[65%] p-0">
+        <Header
+          name={name} setName={setName}
+          team={team} setTeam={setTeam}
+          classCode={classCode} setClassCode={setClassCode}
+          weekDate={weekDate} setWeekDate={setWeekDate}
+          sunday={sunday}
+          onClear={handleClear}
+        />
+        <div className="p-4">
+          {SECTIONS.map(s => (
+            <SectionGrid key={s.id} section={s} grid={grid} setGrid={setGrid} highlights={highlights} />
+          ))}
+          <Summary grid={grid} />
+          <AbsenceAndSignatures absence={absence} setAbsence={setAbsence} />
+        </div>
+      </div>
+
+      {/* Chat sidebar */}
+      <div className="lg:w-[35%] border-l border-gray-200 bg-white flex flex-col h-screen lg:sticky lg:top-0 no-print">
+        <ChatSidebar grid={grid} setGrid={setGrid} />
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
