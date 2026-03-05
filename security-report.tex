@@ -98,47 +98,38 @@ The MLI Weekly Hours application processes instructor work-hour data to auto-fil
 
 The application runs entirely in the user's web browser. There is no backend server, no database, and no persistent storage of any kind.
 
+\noindent The data flows through six stages, all within the browser except the AI call:
+
 \begin{center}
 \begin{tikzpicture}[
-  node distance=0.8cm and 1.2cm,
-  box/.style={draw, rounded corners=4pt, minimum width=2.6cm, minimum height=1cm, align=center, font=\small\bfseries},
-  userbox/.style={box, fill=milgreen!15, draw=milgreen},
-  procbox/.style={box, fill=infoblue, draw=blue!50!black},
-  aibox/.style={box, fill=warnbox, draw=orange!70!black},
-  outbox/.style={box, fill=safebox, draw=safegreen},
+  sbox/.style={draw, rounded corners=4pt, minimum width=2.6cm, minimum height=0.85cm, align=center, font=\footnotesize\bfseries},
   arr/.style={-{Stealth[length=3mm]}, thick},
-  darr/.style={-{Stealth[length=3mm]}, thick, dashed, gray},
 ]
+  % Vertical flow — no overlap possible
+  \node[sbox, fill=milgreen!15, draw=milgreen] (excel) at (0, 0) {1. Excel File (with PII)};
+  \node[sbox, fill=infoblue, draw=blue!50!black] (sanitize) at (0, -1.5) {2. Sanitizer --- strip columns};
+  \node[sbox, fill=infoblue, draw=blue!50!black] (tokenize) at (0, -3) {3. Tokenizer --- names $\rightarrow$ MLI\_1, MLI\_2};
+  \node[sbox, fill=warnbox, draw=orange!70!black] (gemini) at (0, -4.5) {4. Google Gemini AI};
+  \node[sbox, fill=infoblue, draw=blue!50!black] (detokenize) at (0, -6) {5. Detokenizer --- tokens $\rightarrow$ names};
+  \node[sbox, fill=safebox, draw=safegreen] (output) at (0, -7.5) {6. Chat Display \& PDF Export};
 
-  % Nodes
-  \node[userbox] (excel) {Excel File\\(with PII)};
-  \node[procbox, right=of excel] (sanitize) {Sanitizer\\(in browser)};
-  \node[procbox, right=of sanitize] (tokenize) {Tokenizer\\(in browser)};
-  \node[aibox, right=of tokenize] (gemini) {Google\\Gemini AI};
-  \node[procbox, below=1.2cm of gemini] (detokenize) {Detokenizer\\(in browser)};
-  \node[outbox, left=of detokenize] (display) {Chat\\Display};
-  \node[outbox, left=of display] (pdf) {PDF\\Export};
+  % Arrows with side labels
+  \draw[arr] (excel) -- node[right, font=\scriptsize, xshift=4pt] {\color{stripred}Student names, locations, notes removed} (sanitize);
+  \draw[arr] (sanitize) -- node[right, font=\scriptsize, xshift=4pt] {\color{tokenblue}Real names replaced with anonymous tokens} (tokenize);
+  \draw[arr] (tokenize) -- node[right, font=\scriptsize, xshift=4pt] {\color{tokenblue}Only tokens + hours data sent externally} (gemini);
+  \draw[arr] (gemini) -- node[right, font=\scriptsize, xshift=4pt] {\color{tokenblue}AI responds using tokens} (detokenize);
+  \draw[arr] (detokenize) -- node[right, font=\scriptsize, xshift=4pt] {\color{safegreen}Full names restored locally for display \& PDF} (output);
 
-  % Arrows
-  \draw[arr] (excel) -- (sanitize);
-  \draw[arr] (sanitize) -- node[above, font=\scriptsize\color{stripred}] {PII stripped} (tokenize);
-  \draw[arr] (tokenize) -- node[above, font=\scriptsize\color{tokenblue}] {tokens only} (gemini);
-  \draw[arr] (gemini) -- node[right, font=\scriptsize\color{tokenblue}] {tokens} (detokenize);
-  \draw[arr] (detokenize) -- node[above, font=\scriptsize] {last names} (display);
-  \draw[arr] (detokenize) -- node[above, font=\scriptsize\color{safegreen}] {full names} (pdf);
-
-  % Browser boundary
+  % Boundary labels
   \begin{scope}[on background layer]
     \node[draw=milgreen, dashed, thick, rounded corners=8pt, fill=milgreen!3,
-          fit=(excel)(sanitize)(tokenize)(detokenize)(display)(pdf),
-          inner sep=12pt, label={[font=\small\bfseries\color{milgreen}]above:User's Browser (Client-Side)}] {};
+          fit=(excel)(sanitize)(tokenize)(detokenize)(output),
+          inner sep=14pt, label={[font=\footnotesize\bfseries\color{milgreen}]left:Browser}] {};
   \end{scope}
-
-  % External boundary
   \begin{scope}[on background layer]
     \node[draw=orange!70!black, dashed, thick, rounded corners=8pt, fill=orange!3,
           fit=(gemini),
-          inner sep=10pt, label={[font=\small\bfseries\color{orange!70!black}]above:External API}] {};
+          inner sep=10pt, label={[font=\footnotesize\bfseries\color{orange!70!black}]left:External}] {};
   \end{scope}
 
 \end{tikzpicture}
@@ -215,26 +206,25 @@ Even the 6 kept fields undergo further anonymization. The MLI name column is rep
 
 \begin{center}
 \begin{tikzpicture}[
-  node distance=0.3cm,
-  row/.style={font=\small\ttfamily},
+  row/.style={font=\scriptsize\ttfamily},
 ]
   % Before
-  \node[font=\small\bfseries] at (-3.5, 2) {After Stripping};
-  \node[row] at (-3.5, 1.3) {Morgan,A3,Full Section,6,,0730};
-  \node[row] at (-3.5, 0.8) {Smith,B2,Split Section,4,,0800};
-  \node[row] at (-3.5, 0.3) {Morgan,A3,Spec Asst,1,,1300};
+  \node[font=\small\bfseries] at (-3, 2) {After Stripping};
+  \node[row] at (-3, 1.3) {Morgan,A3,Full Section,6,,0730};
+  \node[row] at (-3, 0.8) {Smith,B2,Split Section,4,,0800};
+  \node[row] at (-3, 0.3) {Morgan,A3,Spec Asst,1,,1300};
 
   % Arrow
-  \draw[-{Stealth[length=4mm]}, ultra thick, color=tokenblue] (0.4, 1) -- node[above, font=\small\bfseries\color{tokenblue}] {Tokenize} (2.2, 1);
+  \draw[-{Stealth[length=4mm]}, ultra thick, color=tokenblue] (0.8, 1) -- node[above, font=\small\bfseries\color{tokenblue}] {Tokenize} (2.8, 1);
 
   % After
-  \node[font=\small\bfseries] at (5.5, 2) {Sent to AI};
-  \node[row, color=tokenblue] at (5.5, 1.3) {MLI\_1,A3,Full Section,6,,0730};
-  \node[row, color=tokenblue] at (5.5, 0.8) {MLI\_2,B2,Split Section,4,,0800};
-  \node[row, color=tokenblue] at (5.5, 0.3) {MLI\_1,A3,Spec Asst,1,,1300};
+  \node[font=\small\bfseries] at (6.4, 2) {Sent to AI};
+  \node[row, color=tokenblue] at (6.4, 1.3) {MLI\_1,A3,Full Section,6,,0730};
+  \node[row, color=tokenblue] at (6.4, 0.8) {MLI\_2,B2,Split Section,4,,0800};
+  \node[row, color=tokenblue] at (6.4, 0.3) {MLI\_1,A3,Spec Asst,1,,1300};
 
   % Note
-  \node[draw=tokenblue, fill=infoblue, rounded corners=3pt, font=\scriptsize, text width=8cm, align=center] at (1, -0.6)
+  \node[draw=tokenblue, fill=infoblue, rounded corners=3pt, font=\scriptsize, text width=9cm, align=center] at (1.8, -0.6)
     {Same person (Morgan) always maps to same token (MLI\_1) for consistent classification};
 
 \end{tikzpicture}
@@ -394,19 +384,18 @@ $^*$\textit{Free-text scrubbing only works for names known from a prior Excel up
 
 \begin{center}
 \begin{tikzpicture}[
-  node distance=1.5cm,
-  phase/.style={draw, rounded corners=6pt, minimum width=3.2cm, minimum height=1.2cm, align=center, font=\small\bfseries},
+  phase/.style={draw, rounded corners=6pt, minimum width=2.8cm, minimum height=1.1cm, align=center, font=\small\bfseries},
   create/.style={phase, fill=infoblue, draw=tokenblue},
   live/.style={phase, fill=safebox, draw=safegreen},
   destroy/.style={phase, fill=dangerred, draw=stripred},
   arr/.style={-{Stealth[length=3mm]}, thick},
 ]
-  \node[create] (upload) {File Upload\\{\scriptsize\normalfont Excel dropped}};
-  \node[live, right=of upload] (process) {Sanitize +\\Tokenize\\{\scriptsize\normalfont In browser RAM}};
-  \node[live, right=of process] (ai) {AI Chat\\{\scriptsize\normalfont Tokens only}};
-  \node[live, below=of ai] (result) {Form Filled\\{\scriptsize\normalfont Local state}};
-  \node[live, left=of result] (pdf) {PDF Export\\{\scriptsize\normalfont Local download}};
-  \node[destroy, left=of pdf] (gone) {Page Close\\{\scriptsize\normalfont All data gone}};
+  \node[create] (upload) at (0, 0) {File Upload\\{\scriptsize\normalfont Excel dropped}};
+  \node[live] (process) at (4, 0) {Sanitize +\\Tokenize\\{\scriptsize\normalfont In browser RAM}};
+  \node[live] (ai) at (8, 0) {AI Chat\\{\scriptsize\normalfont Tokens only}};
+  \node[live] (result) at (8, -2.4) {Form Filled\\{\scriptsize\normalfont Local state}};
+  \node[live] (pdf) at (4, -2.4) {PDF Export\\{\scriptsize\normalfont Local download}};
+  \node[destroy] (gone) at (0, -2.4) {Page Close\\{\scriptsize\normalfont All data gone}};
 
   \draw[arr] (upload) -- (process);
   \draw[arr] (process) -- (ai);
