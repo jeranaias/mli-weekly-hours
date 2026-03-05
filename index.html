@@ -184,6 +184,9 @@ If clarification needed:
 }
 \`\`\`
 
+## Privacy
+Names in spreadsheet data are anonymized as tokens (MLI_1, MLI_2, etc.). Use these tokens exactly as given — do not try to guess real names. Free-text messages may also contain tokens instead of names.
+
 ## Batch Mode (CMLI use case)
 When the user asks to process hours for MULTIPLE people from a spreadsheet (e.g., "generate forms for all team members", "I am the CMLI, make forms for everyone"), return a batch response:
 \`\`\`json
@@ -192,13 +195,13 @@ When the user asks to process hours for MULTIPLE people from a spreadsheet (e.g.
   "sundayDate": "2 Mar 2026",
   "members": [
     {
-      "name": "Morgan, Jesse SSgt",
+      "name": "MLI_1",
       "platformRows": [{ "teamDsg": "A3", "fullSect": 15 }],
       "nonPlatform": { "classPrep": 2 },
       "unitHours": { "unitDuties": 1 }
     },
     {
-      "name": "Smith, John Sgt",
+      "name": "MLI_2",
       "platformRows": [{ "teamDsg": "B2", "fullSect": 12 }],
       "nonPlatform": {},
       "unitHours": {}
@@ -206,7 +209,7 @@ When the user asks to process hours for MULTIPLE people from a spreadsheet (e.g.
   ]
 }
 \`\`\`
-Include every person found in the data. Each member gets their own complete form data. If the user identifies themselves ("I am SSgt Morgan"), process only that person in normal (non-batch) mode. Batch mode is for when a supervisor wants ALL forms at once.`;
+Include every person found in the data. Each member gets their own complete form data. Use the same MLI token the user provided (MLI_1, MLI_2, etc.) as the "name" field. If the user identifies themselves ("I am MLI_1"), process only that person in normal (non-batch) mode. Batch mode is for when a supervisor wants ALL forms at once.`;
 
 // ─── Firebase Init ───────────────────────────────────────────────────────────
 let firebaseAuth = null;
@@ -255,8 +258,23 @@ function lastName(full) {
 
 function sanitizeExcel(data) {
   const wb = XLSX.read(data, { type: 'array' });
-  const nameMap = {};
+  const tokenMap = {};      // MLI_1 → "Morgan, Jesse SSgt"
+  const nameToToken = {};   // MORGAN → MLI_1
+  let tokenId = 0;
   let output = '';
+
+  function getToken(ln, fullName) {
+    const key = ln.toUpperCase();
+    if (nameToToken[key]) {
+      if (fullName && !tokenMap[nameToToken[key]]) tokenMap[nameToToken[key]] = fullName;
+      return nameToToken[key];
+    }
+    tokenId++;
+    const tok = `MLI_${tokenId}`;
+    nameToToken[key] = tok;
+    if (fullName) tokenMap[tok] = fullName;
+    return tok;
+  }
 
   for (const sn of wb.SheetNames) {
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: '' });
@@ -272,19 +290,20 @@ function sanitizeExcel(data) {
     const colTime = find('time');
 
     if (!colMLI && !colType) {
-      return { text: null, nameMap: {}, error: 'Could not find "MLI 1" and "TYPE" columns in the spreadsheet. Please check the column headers.' };
+      return { text: null, tokenMap: {}, nameToToken: {}, error: 'Could not find "MLI 1" and "TYPE" columns in the spreadsheet. Please check the column headers.' };
     }
 
     const lines = ['MLI,Team,Type,Hours,Date,Time'];
     for (const row of rows) {
       const fullMLI = String(row[colMLI] || '').trim();
-      const mli = lastName(fullMLI);
-      if (mli && fullMLI) nameMap[mli.toUpperCase()] = nameMap[mli.toUpperCase()] || fullMLI;
+      const ln = lastName(fullMLI);
+      const tok1 = ln ? getToken(ln, fullMLI) : '';
 
+      let tok2 = '';
       if (colMLI2) {
         const full2 = String(row[colMLI2] || '').trim();
         const ln2 = lastName(full2);
-        if (ln2 && full2) nameMap[ln2.toUpperCase()] = nameMap[ln2.toUpperCase()] || full2;
+        tok2 = ln2 ? getToken(ln2, full2) : '';
       }
 
       const team = String(row[colTeam] || '');
@@ -294,15 +313,37 @@ function sanitizeExcel(data) {
       const hrs = m ? m[2] : '';
       const date = String(row[colDate] || '');
       const time = String(row[colTime] || '');
-      if (!mli && !type) continue;
+      if (!tok1 && !type) continue;
 
-      const mli2 = colMLI2 ? lastName(String(row[colMLI2] || '')) : '';
-      const entry = mli2 ? `${mli}+${mli2}` : mli;
+      const entry = tok2 ? `${tok1}+${tok2}` : tok1;
       lines.push([entry, team, type, hrs, date, time].join(','));
     }
     output += lines.join('\n') + '\n';
   }
-  return { text: output.trim(), nameMap };
+  return { text: output.trim(), tokenMap, nameToToken };
+}
+
+// Replace tokens (MLI_1) with last names for user-facing display
+function detokenize(text, nameToToken) {
+  if (!nameToToken) return text;
+  let result = text;
+  for (const [name, token] of Object.entries(nameToToken)) {
+    const display = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+    result = result.replaceAll(token, display);
+  }
+  return result;
+}
+
+// Replace known names in free text with tokens before sending to AI
+function tokenizeFreeText(text, nameToToken) {
+  if (!nameToToken || !Object.keys(nameToToken).length) return text;
+  let result = text;
+  const names = Object.keys(nameToToken).sort((a, b) => b.length - a.length);
+  for (const name of names) {
+    const regex = new RegExp(`\\b${name}\\b`, 'gi');
+    result = result.replace(regex, nameToToken[name]);
+  }
+  return result;
 }
 
 // ─── PDF Export ──────────────────────────────────────────────────────────────
@@ -613,7 +654,7 @@ function ChatMessage({ msg, onBatchDownload, batchLoading }) {
           <div className="mt-2 border-t border-gray-200 pt-2">
             <div className="text-xs font-semibold mb-1">${msg.batchData.members.length} team members found:</div>
             ${msg.batchData.members.map((m, i) => html`
-              <div key=${i} className="text-xs text-gray-600 py-0.5">${m.name}</div>
+              <div key=${i} className="text-xs text-gray-600 py-0.5">${m.displayName || m.name}</div>
             `)}
             <button onClick=${() => onBatchDownload(msg.batchData)} disabled=${batchLoading}
               className="mt-2 px-3 py-1.5 bg-yellow-600 text-white rounded text-xs font-semibold hover:bg-yellow-700 disabled:opacity-50 w-full">
@@ -700,7 +741,7 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
   const chatEndRef = useRef(null);
   const fileRef = useRef(null);
   const dragCounter = useRef(0);
-  const nameMapRef = useRef({});
+  const nameMapRef = useRef({ tokenMap: {}, nameToToken: {} });
 
   useEffect(() => {
     chatRef.current = (aiModel && user) ? aiModel.startChat() : null;
@@ -751,12 +792,11 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
   const handleBatchDownload = async (batchData) => {
     setBatchLoading(true);
     try {
-      // Expand last names back to full names using nameMap
-      const nm = nameMapRef.current;
-      const expanded = batchData.members.map(m => {
-        const key = (m.name || '').toUpperCase();
-        return { ...m, name: nm[key] || m.name };
-      });
+      // Expand tokens (MLI_1) to full names for PDF forms
+      const tm = nameMapRef.current.tokenMap || {};
+      const expanded = batchData.members.map(m => ({
+        ...m, name: tm[m.name] || m.name
+      }));
       await batchExportPDFs(expanded, batchData.sundayDate);
     } catch (err) {
       alert('Batch export failed: ' + err.message);
@@ -765,11 +805,13 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
 
   const processResponse = (aiText, newMessages) => {
     const parsed = parseAIResponse(aiText);
-    const display = aiText.replace(/```json[\s\S]*?```/g, '').trim();
+    const nt = nameMapRef.current.nameToToken;
+    const display = detokenize(aiText.replace(/```json[\s\S]*?```/g, '').trim(), nt);
 
-    // Batch mode
+    // Batch mode — detokenize member names for display
     if (parsed?.batch && parsed.members?.length) {
-      setMessages([...newMessages, { role: 'assistant', display, batchData: parsed }]);
+      const displayBatch = { ...parsed, members: parsed.members.map(m => ({ ...m, displayName: detokenize(m.name || '', nt) })) };
+      setMessages([...newMessages, { role: 'assistant', display, batchData: displayBatch }]);
       return;
     }
 
@@ -796,6 +838,8 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
   const sendMessage = async (text) => {
     const content = (text || input).trim();
     if (!content) return;
+    // Tokenize known names in free-text input before sending to AI
+    const sanitized = tokenizeFreeText(content, nameMapRef.current.nameToToken);
     const userMsg = { role: 'user', content };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
@@ -808,7 +852,7 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
 
     setLoading(true);
     try {
-      const result = await chatRef.current.sendMessage(content);
+      const result = await chatRef.current.sendMessage(sanitized);
       processResponse(result.response.text(), newMessages);
     } catch (err) {
       const msg = err.message?.includes('429') ? 'Rate limit reached. Wait a moment.' : `Error: ${err.message}`;
@@ -834,8 +878,8 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
         setMessages(prev => [...prev, { role: 'assistant', display: 'The file appears empty.' }]);
         return;
       }
-      nameMapRef.current = { ...nameMapRef.current, ...result.nameMap };
-      sendMessage(`Here is a sanitized spreadsheet of my hours (last names only, PII removed). Please classify each entry:\n\n${result.text}`);
+      nameMapRef.current = { tokenMap: { ...nameMapRef.current.tokenMap, ...result.tokenMap }, nameToToken: { ...nameMapRef.current.nameToToken, ...result.nameToToken } };
+      sendMessage(`Here is a spreadsheet of my hours (names anonymized as MLI_1, MLI_2, etc.). Please classify each entry:\n\n${result.text}`);
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', display: `Failed to read file: ${err.message}` }]);
     }
@@ -863,6 +907,7 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
             <p className="mb-2">Tell me about your week and I'll fill the form.</p>
             <p className="text-xs text-gray-300 mb-3">Example: "I taught A3 full section 15 hours, did 2 hours class prep, and 1 hour PERSTAT."</p>
             <p className="text-xs text-gray-300">Or drop/upload an Excel file with your hours.</p>
+            <p className="text-xs text-gray-300 mt-2">Names are automatically anonymized before reaching the AI.</p>
           </div>
         `}
         ${messages.map((m, i) => html`<${ChatMessage} key=${i} msg=${m} onBatchDownload=${handleBatchDownload} batchLoading=${batchLoading} />`)}
