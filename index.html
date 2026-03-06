@@ -1059,7 +1059,7 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
               className="px-3 py-1 bg-gray-200 text-gray-600 rounded text-xs hover:bg-gray-300" title="Upload Excel file">Upload</button>
           </div>
         </div>
-        <input ref=${fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
+        <input ref=${fileRef} type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/comma-separated-values" className="hidden"
           onChange=${e => { handleFile(e.target.files[0]); e.target.value = ''; }} />
       </div>
       <div className="shrink-0">
