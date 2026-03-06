@@ -267,8 +267,11 @@ function parseAIResponse(text) {
 }
 
 function lastName(full) {
-  if (!full) return '';
-  return full.trim().split(/\s+/)[0] || '';
+  if (!full || typeof full !== 'string') return '';
+  const parts = full.trim().split(/\s+/);
+  // Need at least 2 words (last name + first name/rank) to be a real person
+  if (parts.length < 2) return '';
+  return parts[0] || '';
 }
 
 function sanitizeExcel(data) {
@@ -342,9 +345,12 @@ function sanitizeExcel(data) {
 function detokenize(text, nameToToken) {
   if (!nameToToken) return text;
   let result = text;
-  for (const [name, token] of Object.entries(nameToToken)) {
+  // Sort by token number descending so MLI_10 is replaced before MLI_1
+  const entries = Object.entries(nameToToken).sort((a, b) => b[1].length - a[1].length || b[1].localeCompare(a[1]));
+  for (const [name, token] of entries) {
     const display = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
-    result = result.replaceAll(token, display);
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(escaped + '(?!\\d)', 'g'), display);
   }
   return result;
 }
