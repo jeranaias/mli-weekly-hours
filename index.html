@@ -280,6 +280,7 @@ function sanitizeExcel(data) {
   const nameToToken = {};   // MORGAN → MLI_1
   let tokenId = 0;
   let output = '';
+  const dates = [];
 
   function getToken(ln, fullName) {
     const key = ln.toUpperCase();
@@ -312,7 +313,6 @@ function sanitizeExcel(data) {
     }
 
     const lines = ['MLI,Team,Type,Hours,Date,Time'];
-    const dates = [];
     for (const row of rows) {
       const fullMLI = String(row[colMLI] || '').trim();
       const ln = lastName(fullMLI);
