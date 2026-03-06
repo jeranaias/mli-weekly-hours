@@ -312,6 +312,7 @@ function sanitizeExcel(data) {
     }
 
     const lines = ['MLI,Team,Type,Hours,Date,Time'];
+    const dates = [];
     for (const row of rows) {
       const fullMLI = String(row[colMLI] || '').trim();
       const ln = lastName(fullMLI);
@@ -333,12 +334,18 @@ function sanitizeExcel(data) {
       const time = String(row[colTime] || '');
       if (!tok1 && !type) continue;
 
+      // Collect dates for Sunday calculation
+      if (date) {
+        const parsed = new Date(date);
+        if (!isNaN(parsed)) dates.push(parsed.toISOString().split('T')[0]);
+      }
+
       const entry = tok2 ? `${tok1}+${tok2}` : tok1;
       lines.push([entry, team, type, hrs, date, time].join(','));
     }
     output += lines.join('\n') + '\n';
   }
-  return { text: output.trim(), tokenMap, nameToToken };
+  return { text: output.trim(), tokenMap, nameToToken, dates };
 }
 
 // Replace tokens (MLI_1) with last names for user-facing display
@@ -778,7 +785,7 @@ function AuthPanel() {
     </div>`;
 }
 
-function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatform, unitHours, setUnitHours, resetKey }) {
+function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatform, unitHours, setUnitHours, setName, setWeekDate, resetKey }) {
   const { user } = useAuth();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -944,7 +951,18 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
         return;
       }
       nameMapRef.current = { tokenMap: { ...nameMapRef.current.tokenMap, ...result.tokenMap }, nameToToken: { ...nameMapRef.current.nameToToken, ...result.nameToToken } };
-      pendingExcelRef.current = result.text;
+      pendingExcelRef.current = { text: result.text, dates: result.dates || [] };
+
+      // Auto-fill Sunday date from Excel dates
+      const autoFillDate = () => {
+        if (result.dates?.length) {
+          const earliest = [...result.dates].sort()[0];
+          const d = new Date(earliest + 'T00:00:00');
+          d.setDate(d.getDate() - d.getDay());
+          setWeekDate(d.toISOString().split('T')[0]);
+        }
+      };
+
       // Build picker buttons from token map
       const members = Object.entries(result.tokenMap).map(([tok, name]) => ({ token: tok, name }));
       if (members.length > 1) {
@@ -954,11 +972,14 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
           picker: members
         }]);
       } else if (members.length === 1) {
-        // Only one person — just process directly
+        // Only one person — auto-fill name + date and process
+        setName(members[0].name);
+        autoFillDate();
         sendMessage(`I am ${members[0].token}. Here is a spreadsheet of my hours (names anonymized). Please classify each entry:\n\n${result.text}`);
         pendingExcelRef.current = null;
       } else {
         // No names found — send directly
+        autoFillDate();
         sendMessage(`Here is a spreadsheet of my hours. Please classify each entry:\n\n${result.text}`);
         pendingExcelRef.current = null;
       }
@@ -968,15 +989,32 @@ function ChatSidebar({ platformRows, setPlatformRows, nonPlatform, setNonPlatfor
   };
 
   const handlePickMember = (token, isBatch) => {
-    const excelText = pendingExcelRef.current;
-    if (!excelText) return;
+    const pending = pendingExcelRef.current;
+    if (!pending) return;
     pendingExcelRef.current = null;
     // Remove picker buttons from the message
     setMessages(prev => prev.map(m => m.picker ? { ...m, picker: null } : m));
+
+    // Auto-fill name from token map
+    if (token) {
+      const fullName = nameMapRef.current.tokenMap[token] || '';
+      if (fullName) setName(fullName);
+    }
+
+    // Auto-fill Sunday date from Excel dates
+    if (pending.dates && pending.dates.length) {
+      const earliest = pending.dates.sort()[0];
+      // Find the Sunday on or before the earliest date
+      const d = new Date(earliest + 'T00:00:00');
+      d.setDate(d.getDate() - d.getDay()); // roll back to Sunday
+      const iso = d.toISOString().split('T')[0];
+      setWeekDate(iso);
+    }
+
     if (isBatch) {
-      sendMessage(`Here is a spreadsheet of hours for multiple MLIs (names anonymized as MLI_1, MLI_2, etc.). Generate batch forms for ALL team members — one PDF per person. Use batch mode.\n\n${excelText}`);
+      sendMessage(`Here is a spreadsheet of hours for multiple MLIs (names anonymized as MLI_1, MLI_2, etc.). Generate batch forms for ALL team members — one PDF per person. Use batch mode.\n\n${pending.text}`);
     } else {
-      sendMessage(`I am ${token}. Here is a spreadsheet of my hours (names anonymized). Please classify my hours only:\n\n${excelText}`);
+      sendMessage(`I am ${token}. Here is a spreadsheet of my hours (names anonymized). Please classify my hours only:\n\n${pending.text}`);
     }
   };
 
@@ -1099,7 +1137,8 @@ function App() {
         <div className=${`lg:w-[35%] border-l border-gray-200 bg-white flex flex-col h-[calc(100vh-41px)] lg:h-screen lg:sticky lg:top-0 no-print ${mobileTab !== 'chat' ? 'hidden lg:flex' : ''}`}>
           <${ChatSidebar} platformRows=${platformRows} setPlatformRows=${setPlatformRows}
             nonPlatform=${nonPlatform} setNonPlatform=${setNonPlatform}
-            unitHours=${unitHours} setUnitHours=${setUnitHours} resetKey=${chatKey} />
+            unitHours=${unitHours} setUnitHours=${setUnitHours}
+            setName=${setName} setWeekDate=${setWeekDate} resetKey=${chatKey} />
         </div>
       </div>
     </${AuthProvider}>`;
